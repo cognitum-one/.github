@@ -2,60 +2,59 @@
 
 # Cognitum
 
-### Intelligence in everything.
+### AI agent infrastructure platform.
 
-**Self-learning smart sensors and agentic systems for the physical world.**
+**Deploy intelligent agents on the Seed hardware device, integrate via MCP protocol, and build with Rust, Node.js, and Python SDKs.**
 
-[Website](https://cognitum.one) · [Get Started](https://github.com/cognitum-one/support#getting-started) · [Support](https://github.com/cognitum-one/support/issues) · [Releases](https://github.com/cognitum-one/support/releases)
+[Website](https://cognitum.one) · [Pre-order Seed](https://cognitum.one/order) · [Support](https://github.com/cognitum-one/support) · [Releases](https://github.com/cognitum-one/support/releases)
+
+[![Twitter](https://img.shields.io/badge/Twitter-%40Cognitum-1DA1F2)](https://twitter.com/Cognitum)
+[![LinkedIn](https://img.shields.io/badge/LinkedIn-Cognitum-0A66C2)](https://linkedin.com/company/cognitum)
 
 ---
 
 </div>
 
-## 👋 Welcome
+## What is Cognitum?
 
-Cognitum builds hardware and software that bring real-time learning to edge devices.  
+Cognitum builds hardware and software that bring real-time learning to edge devices.
 
-## 📦 Products
+**Cognitum Seed** is an AI-powered hardware device with a WASM runtime, Ed25519 cryptographic identity, OTA firmware updates, on-device vector store, and MCP protocol integration. Build with Rust, Node.js, and Python SDKs.
 
-- **Cognitum Seed** — Self-learning USB sensor appliance (Pi Zero 2 W, armhf, <1.5W)
-- **Cognitum V0 Hub** — Multi-seed coordinator appliance
-- **Cognitum Cogs** — Rust-based self-contained apps that run on Seed
-- **Cognitum Management** — Admin dashboard at [manage.cognitum.one](https://manage.cognitum.one)
-- **Cognitum Desktop** — Windows & macOS optimizer with neural learning
+Self-learning hardware that works without the cloud.
 
-## 🚀 Quick Start
+## Product decks
 
-Plug a Cognitum Seed into any USB port, wait 10 seconds, and open:
+- **[Cognitum Seed](https://cognitum.one/seed)** — The hardware device
+- **[V0 Appliance](https://cognitum.one/v0)** — Multi-seed coordinator
+- **[Intro Deck](https://cognitum.one/intro)** — Platform overview
+- **[Technical](https://cognitum.one/deck/technical)** · **[Security](https://cognitum.one/deck/security)** · **[Agentic OS](https://cognitum.one/deck/agentic-os)** · **[Enterprise](https://cognitum.one/deck/enterprise)**
 
-```
-http://169.254.42.1/guide
-```
+## Get a Seed
 
-Full setup guide, API reference, and firmware downloads: **[cognitum-one/support](https://github.com/cognitum-one/support)**
+**[Pre-order at cognitum.one/order](https://cognitum.one/order)** — $131 USD
 
-## 🧠 Technology
+## Support & community
 
-- **SONA** — Self-Optimizing Neural Architecture (<0.05ms adaptation)
-- **HNSW** — Vector search 150x–12,500x faster than SQLite FTS
-- **Flash Attention** — 2.49x–7.47x speedup
-- **Edge-first** — Full intelligence runs locally; cloud sync is optional
+All public resources live in **[cognitum-one/support](https://github.com/cognitum-one/support)**:
 
-## 📬 Get in Touch
+- [Firmware downloads](https://github.com/cognitum-one/support/releases) — gold images, upgrade scripts, SHA256 checksums
+- [Documentation](https://github.com/cognitum-one/support#documentation) — getting started, API, troubleshooting
+- [Report a bug](https://github.com/cognitum-one/support/issues/new?template=bug_report.yml)
+- [Request a feature](https://github.com/cognitum-one/support/issues/new?template=feature_request.yml)
 
-- 🐛 **Report a bug or request a feature:** [cognitum-one/support/issues](https://github.com/cognitum-one/support/issues)
-- 📖 **Documentation:** [cognitum.one/docs](https://cognitum.one/docs)
-- 💬 **Community:** [cognitum.one/community](https://cognitum.one/community)
-- 📧 **Sales & partnerships:** hello@cognitum.one
+## Technical pillars
 
-## 🌱 Mission
+- **MCP protocol** — Standard interface for agent tool integration
+- **WASM runtime** — Sandboxed execution for cogs (self-contained apps)
+- **Ed25519 identity** — Cryptographic device identity per seed
+- **On-device vector store** — Local semantic search, no round-trip to cloud
+- **OTA updates** — Signed firmware over the air
+- **Fleet management** — Multi-device coordination at scale
 
-We believe every physical object deserves a measure of intelligence. Cognitum makes that practical: a self-learning sensor small enough to plug into anything, private by default, with no cloud dependency.
+## Follow us
 
----
-
-<div align="center">
-
-**[Get a Seed](https://cognitum.one/shop)** · **[Read the docs](https://cognitum.one/docs)** · **[Join us](https://cognitum.one/jobs)**
-
-</div>
+- Twitter: [@Cognitum](https://twitter.com/Cognitum)
+- LinkedIn: [linkedin.com/company/cognitum](https://linkedin.com/company/cognitum)
+- Website: [cognitum.one](https://cognitum.one)
+- [Privacy policy](https://cognitum.one/privacy)
