@@ -14,7 +14,7 @@
 
 ## 👋 Welcome
 
-Cognitum builds hardware and software that bring real-time learning to edge devices. Our flagship product — **Cognitum Seed** — is a headless smart sensor built on a $4 ARM processor that learns from the world around it, with vector intelligence on the chip.
+Cognitum builds hardware and software that bring real-time learning to edge devices.  
 
 ## 📦 Products
 
