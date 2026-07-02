@@ -1,20 +1,13 @@
 name: security-scan
 
-# Reusable org-wide security scan. Callers invoke it with:
+# Reusable org-wide security scan (gitleaks full-history + OSV-Scanner).
+# Callers: jobs.scan.uses: cognitum-one/.github/.github/workflows/security-scan.yml@main
 #
-#   jobs:
-#     scan:
-#       uses: cognitum-one/.github/.github/workflows/security-scan.yml@main
-#
-# Runs two independent jobs:
-#   secrets — gitleaks (full history) using the org gitleaks.toml allowlist
-#   deps    — OSV-Scanner across every lockfile (npm / cargo / pip / go / ...)
-#
-# We invoke the gitleaks BINARY directly (MIT-licensed) rather than the
-# gitleaks-action, which requires a paid GITLEAKS_LICENSE for organizations.
+# NOTE: calling a reusable workflow across repos requires the org Actions policy
+# to allow reusable workflows from cognitum-one/.github. Until that is enabled,
+# repos use the SELF-CONTAINED equivalent in workflow-templates/security.yml.
 
 on:
-  workflow_dispatch:
   workflow_call:
     inputs:
       gitleaks-version:
@@ -23,7 +16,6 @@ on:
 
 permissions:
   contents: read
-  security-events: read
 
 jobs:
   secrets:
@@ -32,46 +24,29 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # full history — secrets often live in old commits
-
-      - name: Fetch org gitleaks config
-        run: |
-          curl -fsSL \
-            https://raw.githubusercontent.com/cognitum-one/.github/main/gitleaks.toml \
-            -o .gitleaks.org.toml || echo "no org config; using defaults"
-
-      - name: Install gitleaks
-        run: |
-          V="${{ inputs.gitleaks-version }}"
-          curl -fsSL "https://github.com/gitleaks/gitleaks/releases/download/v${V}/gitleaks_${V}_linux_x64.tar.gz" \
-            | tar -xz gitleaks
-          sudo mv gitleaks /usr/local/bin/
-
+          fetch-depth: 0
       - name: Run gitleaks (full history)
         run: |
+          curl -fsSL https://raw.githubusercontent.com/cognitum-one/.github/main/gitleaks.toml -o .gitleaks.org.toml || true
+          V="${{ inputs.gitleaks-version }}"
+          curl -fsSL "https://github.com/gitleaks/gitleaks/releases/download/v${V}/gitleaks_${V}_linux_x64.tar.gz" | tar -xzf - gitleaks
           CFG=""
           [ -f .gitleaks.toml ] && CFG="--config .gitleaks.toml"
           [ -z "$CFG" ] && [ -f .gitleaks.org.toml ] && CFG="--config .gitleaks.org.toml"
-          gitleaks detect --source . $CFG --redact \
-            --report-format sarif --report-path gitleaks.sarif --exit-code 1
-
-      - name: Upload gitleaks report
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: gitleaks-sarif
-          path: gitleaks.sarif
-          if-no-files-found: ignore
+          ./gitleaks detect --source . $CFG --redact --exit-code 1
 
   deps:
     name: dependency scan (OSV)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: OSV-Scanner
-        uses: google/osv-scanner-action/osv-scanner-action@v2.2.4
-        with:
-          scan-args: |-
-            --recursive
-            --skip-git
-            ./
+      - name: Run OSV-Scanner
+        run: |
+          curl -fsSL "https://github.com/google/osv-scanner/releases/download/v2.2.4/osv-scanner_linux_amd64" -o osv-scanner
+          chmod +x osv-scanner
+          set +e
+          ./osv-scanner --recursive .
+          code=$?
+          set -e
+          if [ "$code" = "128" ]; then echo "no supported manifests found; skipping"; exit 0; fi
+          exit "$code"
