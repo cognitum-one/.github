@@ -21,6 +21,20 @@ paths = [
   '''tests/test_helpers/mod\.rs''',
   # office: TEST_PRIVATE_PEM — clearly labelled test-only RSA key
   '''crates/api/src/test_support\.rs''',
+
+  # Committed PUBLIC keys / certificates — public by definition, not secrets.
+  '''.*\.pub$''',
+  '''.*(ca|cert|certificate|release-signing)[a-z0-9._-]*\.pem$''',
+
+  # Test / spec / mock fixtures — fabricated values; real secrets don't belong
+  # here. NOTE: a path allowlist suppresses ALL rules under these paths (a recall
+  # trade-off we accept, since test/doc example keys are the top FP source and
+  # high-precision provider leaks in tests are rare + already bad practice).
+  '''(^|.*/)tests?/.*''',
+  '''.*\.test\.[a-z]+$''',
+  '''.*_test\.[a-z]+$''',
+  '''.*(^|/)test_[a-z0-9_]*\.py$''',
+  '''.*(^|/)mock_[a-z0-9_]*\.[a-z]+$''',
 ]
 
 # Obvious placeholders that are safe to ignore anywhere they appear.
