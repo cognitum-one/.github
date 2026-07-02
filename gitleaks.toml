@@ -1,0 +1,34 @@
+# cognitum-one org-wide gitleaks config
+# Extends the default ruleset and allowlists KNOWN, HAND-VERIFIED test fixtures
+# so scans stay high-signal. Adding an entry here is a security decision — each
+# item below was manually confirmed to be a non-secret (2026-07-02 org sweep).
+#
+# NOTE: allowlisting is done by PATH (not by embedding the literal fixture
+# values) so this config itself never trips secret push-protection.
+title = "cognitum-one gitleaks"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Verified non-secrets: benchmark constants, doc placeholders, test-only keys"
+
+# Paths (repo-relative) that hold intentionally-committed, NON-production key
+# material or fabricated format-validation constants. Verified 2026-07-02.
+paths = [
+  # cogs: fabricated Stripe-shaped constants benchmarking key-FORMAT validation
+  '''benches/security_bench\.rs''',
+  '''tests/test_helpers/mod\.rs''',
+  # office: TEST_PRIVATE_PEM — clearly labelled test-only RSA key
+  '''crates/api/src/test_support\.rs''',
+]
+
+# Obvious placeholders that are safe to ignore anywhere they appear.
+regexes = [
+  '''AIzaSyDummyPlaceholder[A-Za-z0-9_]*''',
+  '''sk_your_api_key''',
+  '''tskey-auth-XXXXXX[A-Za-z0-9-]*''',
+]
+
+# The real Firebase web key formerly in website/.env.production is deliberately
+# NOT allowlisted — it is being remediated, not suppressed.

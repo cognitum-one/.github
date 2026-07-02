@@ -1,0 +1,16 @@
+name: security
+
+# Org security scan for this repo. Calls the shared reusable workflow.
+# Add via GitHub UI: Actions → New workflow → "Security scan (cognitum-one)".
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "0 6 * * 1" # Mondays 06:00 UTC — weekly drift sweep
+  workflow_dispatch:
+
+jobs:
+  scan:
+    uses: cognitum-one/.github/.github/workflows/security-scan.yml@main

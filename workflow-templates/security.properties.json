@@ -1,0 +1,6 @@
+{
+  "name": "Security scan (cognitum-one)",
+  "description": "Gitleaks secret scan (full history) + OSV dependency scan. Calls the shared org reusable workflow.",
+  "iconName": "shield",
+  "categories": ["Security", "Rust", "TypeScript", "Python"]
+}

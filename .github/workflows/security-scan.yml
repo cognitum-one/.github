@@ -1,0 +1,80 @@
+name: security-scan
+
+# Reusable org-wide security scan. Callers invoke it with:
+#
+#   jobs:
+#     scan:
+#       uses: cognitum-one/.github/.github/workflows/security-scan.yml@main
+#
+# Runs two independent jobs:
+#   secrets — gitleaks (full history) using the org gitleaks.toml allowlist
+#   deps    — OSV-Scanner across every lockfile (npm / cargo / pip / go / ...)
+#
+# We invoke the gitleaks BINARY directly (MIT-licensed) rather than the
+# gitleaks-action, which requires a paid GITLEAKS_LICENSE for organizations.
+
+on:
+  workflow_call:
+    inputs:
+      gitleaks-version:
+        type: string
+        default: "8.30.1"
+    secrets:
+      # Optional: pass a token if callers want issues opened on failure.
+      gh-token:
+        required: false
+
+permissions:
+  contents: read
+  security-events: read
+
+jobs:
+  secrets:
+    name: secret scan (gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history — secrets often live in old commits
+
+      - name: Fetch org gitleaks config
+        run: |
+          curl -fsSL \
+            https://raw.githubusercontent.com/cognitum-one/.github/main/gitleaks.toml \
+            -o .gitleaks.org.toml || echo "no org config; using defaults"
+
+      - name: Install gitleaks
+        run: |
+          V="${{ inputs.gitleaks-version }}"
+          curl -fsSL "https://github.com/gitleaks/gitleaks/releases/download/v${V}/gitleaks_${V}_linux_x64.tar.gz" \
+            | tar -xz gitleaks
+          sudo mv gitleaks /usr/local/bin/
+
+      - name: Run gitleaks (full history)
+        run: |
+          CFG=""
+          [ -f .gitleaks.toml ] && CFG="--config .gitleaks.toml"
+          [ -z "$CFG" ] && [ -f .gitleaks.org.toml ] && CFG="--config .gitleaks.org.toml"
+          gitleaks detect --source . $CFG --redact \
+            --report-format sarif --report-path gitleaks.sarif --exit-code 1
+
+      - name: Upload gitleaks report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gitleaks-sarif
+          path: gitleaks.sarif
+          if-no-files-found: ignore
+
+  deps:
+    name: dependency scan (OSV)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: OSV-Scanner
+        uses: google/osv-scanner-action/osv-scanner-action@v2.2.4
+        with:
+          scan-args: |-
+            --recursive
+            --skip-git
+            ./
