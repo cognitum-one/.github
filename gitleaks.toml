@@ -42,6 +42,7 @@ regexes = [
   '''AIzaSyDummyPlaceholder[A-Za-z0-9_]*''',
   '''sk_your_api_key''',
   '''tskey-auth-XXXXXX[A-Za-z0-9-]*''',
+  '''tok_secretABC123''',
 ]
 
 # The real Firebase web key formerly in website/.env.production is deliberately
