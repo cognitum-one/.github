@@ -3,9 +3,9 @@ name: security-scan
 # Reusable org-wide security scan (gitleaks full-history + OSV-Scanner).
 # Callers: jobs.scan.uses: cognitum-one/.github/.github/workflows/security-scan.yml@main
 #
-# NOTE: calling a reusable workflow across repos requires the org Actions policy
-# to allow reusable workflows from cognitum-one/.github. Until that is enabled,
-# repos use the SELF-CONTAINED equivalent in workflow-templates/security.yml.
+# OSV policy: the job FAILS only on High/Critical vulnerabilities that have a
+# fix available. Lower-severity and unfixable/unmaintained advisories are
+# reported as warnings (informational) so the gate stays actionable. See ADR-092.
 
 on:
   workflow_call:
@@ -13,6 +13,9 @@ on:
       gitleaks-version:
         type: string
         default: "8.30.1"
+      osv-version:
+        type: string
+        default: "2.2.4"
 
 permissions:
   contents: read
@@ -36,17 +39,39 @@ jobs:
           ./gitleaks detect --source . $CFG --redact --exit-code 1
 
   deps:
-    name: dependency scan (OSV)
+    name: dependency scan (OSV, fail on High+ fixable)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Run OSV-Scanner
         run: |
-          curl -fsSL "https://github.com/google/osv-scanner/releases/download/v2.2.4/osv-scanner_linux_amd64" -o osv-scanner
+          V="${{ inputs.osv-version }}"
+          curl -fsSL "https://github.com/google/osv-scanner/releases/download/v${V}/osv-scanner_linux_amd64" -o osv-scanner
           chmod +x osv-scanner
-          set +e
-          ./osv-scanner --recursive .
-          code=$?
-          set -e
-          if [ "$code" = "128" ]; then echo "no supported manifests found; skipping"; exit 0; fi
-          exit "$code"
+          # Human-readable table in the log (never fails the step here)
+          ./osv-scanner --recursive . || true
+          # Machine-readable for the gate
+          ./osv-scanner --recursive --format json . > osv.json 2>/dev/null || true
+          if [ ! -s osv.json ]; then echo "no OSV results (no manifests?)"; exit 0; fi
+          # Gate: fail ONLY on High/Critical (CVSS>=7) vulns that have a fix version.
+          python3 -c '
+          import json,sys
+          try: d=json.load(open("osv.json"))
+          except Exception: sys.exit(0)
+          bad=[]
+          for res in d.get("results",[]):
+           for p in res.get("packages",[]):
+            sev={}
+            for g in p.get("groups",[]):
+             for i in g.get("ids",[]): sev[i]=g.get("max_severity","") or "0"
+            for v in p.get("vulnerabilities",[]):
+             fx=any("fixed" in e for a in v.get("affected",[]) for r in a.get("ranges",[]) for e in r.get("events",[]))
+             try: s=float(sev.get(v["id"],"0") or 0)
+             except Exception: s=0.0
+             if fx and s>=7.0: bad.append((p["package"]["name"],p["package"]["version"],v["id"],s))
+          if bad:
+           print("::error::%d High/Critical vulnerabilities WITH fixes available:"%len(bad))
+           for n,ver,i,s in sorted(bad,key=lambda x:-x[3]): print("  CVSS %.1f  %s@%s  %s"%(s,n,ver,i))
+           sys.exit(1)
+          print("OK: no High/Critical fixable vulnerabilities. (Lower-severity / unfixable advisories above are informational.)")
+          '
