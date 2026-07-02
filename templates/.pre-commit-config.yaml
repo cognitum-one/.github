@@ -1,0 +1,15 @@
+# Copy to a repo root as `.pre-commit-config.yaml`, then `pre-commit install`.
+# Blocks secrets BEFORE they are committed — the cheapest place to stop a leak.
+repos:
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.1
+    hooks:
+      - id: gitleaks
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: detect-private-key
+      - id: check-added-large-files
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
