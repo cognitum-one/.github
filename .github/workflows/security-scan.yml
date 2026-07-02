@@ -19,10 +19,6 @@ on:
       gitleaks-version:
         type: string
         default: "8.30.1"
-    secrets:
-      # Optional: pass a token if callers want issues opened on failure.
-      gh-token:
-        required: false
 
 permissions:
   contents: read
