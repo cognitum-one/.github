@@ -1,11 +1,16 @@
 name: security-scan
 
-# Reusable org-wide security scan (gitleaks full-history + OSV-Scanner).
-# Callers: jobs.scan.uses: cognitum-one/.github/.github/workflows/security-scan.yml@main
+# Reusable org-wide security scan. Callers:
+#   jobs.scan.uses: cognitum-one/.github/.github/workflows/security-scan.yml@main
 #
-# OSV policy: the job FAILS only on High/Critical vulnerabilities that have a
-# fix available. Lower-severity and unfixable/unmaintained advisories are
-# reported as warnings (informational) so the gate stays actionable. See ADR-092.
+# Secrets are scanned in TWO modes (ADR-092):
+#   secrets               — CURRENT files only (--no-git), BLOCKING on every
+#                           push/PR. Respects inline `gitleaks:allow` and the
+#                           org allowlist; no historical-fixture noise.
+#   secrets-history-audit — FULL history, INFORMATIONAL, on the weekly schedule
+#                           (and manual dispatch) only. Surfaces removed/rotated
+#                           secrets as warnings; never blocks.
+# OSV policy: fails only on High/Critical vulnerabilities that have a fix.
 
 on:
   workflow_call:
@@ -22,13 +27,11 @@ permissions:
 
 jobs:
   secrets:
-    name: secret scan (gitleaks)
+    name: secret scan (current files)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - name: Run gitleaks (full history)
+      - name: Run gitleaks (current files, blocking)
         run: |
           curl -fsSL https://raw.githubusercontent.com/cognitum-one/.github/main/gitleaks.toml -o .gitleaks.org.toml || true
           V="${{ inputs.gitleaks-version }}"
@@ -36,7 +39,41 @@ jobs:
           CFG=""
           [ -f .gitleaks.toml ] && CFG="--config .gitleaks.toml"
           [ -z "$CFG" ] && [ -f .gitleaks.org.toml ] && CFG="--config .gitleaks.org.toml"
-          ./gitleaks detect --source . $CFG --redact --exit-code 1
+          # --no-git: scan the working tree (current files) only. Blocks new
+          # secrets; ignores older commits (those are the history audit's job).
+          ./gitleaks detect --source . --no-git $CFG --redact --exit-code 1
+
+  secrets-history-audit:
+    name: secret scan (full history audit)
+    # Informational: weekly schedule + manual runs only. Never blocks push/PR.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Run gitleaks (full history, informational)
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/cognitum-one/.github/main/gitleaks.toml -o .gitleaks.org.toml || true
+          V="${{ inputs.gitleaks-version }}"
+          curl -fsSL "https://github.com/gitleaks/gitleaks/releases/download/v${V}/gitleaks_${V}_linux_x64.tar.gz" | tar -xzf - gitleaks
+          CFG=""
+          [ -f .gitleaks.toml ] && CFG="--config .gitleaks.toml"
+          [ -z "$CFG" ] && [ -f .gitleaks.org.toml ] && CFG="--config .gitleaks.org.toml"
+          # Never fail the workflow — this is an audit, not a gate.
+          ./gitleaks detect --source . $CFG --redact --report-format json --report-path history.json --exit-code 0 || true
+          n=$(python3 -c "import json;print(len(json.load(open('history.json'))))" 2>/dev/null || echo 0)
+          if [ "$n" -gt 0 ]; then
+            echo "::warning::Full-history audit found $n secret finding(s) in git history — review (not blocking; may be removed/rotated secrets)."
+            {
+              echo "## 🔎 Full-history secret audit — $n finding(s)"
+              echo "These are in git *history* (removed/rotated or historical fixtures). Rotate anything real; allowlist confirmed non-secrets in gitleaks.toml."
+              echo ""
+              python3 -c "import json;[print('- \`'+x.get('RuleID','?')+'\` '+x.get('File','?')+':'+str(x.get('StartLine','?'))+' @ '+x.get('Commit','')[:8]) for x in json.load(open('history.json'))[:50]]" 2>/dev/null || true
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Full-history audit: clean."
+          fi
 
   deps:
     name: dependency scan (OSV, fail on High+ fixable)
