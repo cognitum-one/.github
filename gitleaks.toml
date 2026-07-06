@@ -57,6 +57,9 @@ regexes = [
   '''sk_your_api_key''',
   '''tskey-auth-XXXXXX[A-Za-z0-9-]*''',
   '''tok_secretABC123''',
+  # api's README quickstart: `curl -H "X-API-Key: cog_yourkeyhere" ...`.
+  # Verified 2026-07-06: doc-example placeholder, not a real cog_ key.
+  '''cog_yourkeyhere''',
 ]
 
 # The real Firebase web key formerly in website/.env.production is deliberately
