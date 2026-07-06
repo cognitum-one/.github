@@ -35,6 +35,20 @@ paths = [
   '''.*_test\.[a-z]+$''',
   '''.*(^|/)test_[a-z0-9_]*\.py$''',
   '''.*(^|/)mock_[a-z0-9_]*\.[a-z]+$''',
+
+  # 2026-07-06 org onboarding sweep (25 new/rewired repos onto ADR-092):
+  # console — 4 dev/test JWT signing keys (ES256/RSA), fabricated for
+  # entitlement/identity/inference test suites; not a `test/` dir so the
+  # pattern above missed it. Verified: fixture content, no real cert chain.
+  '''(^|.*/)testdata/.*''',
+  # console — kms-stub/envelope.rs:17 is a doc comment describing the
+  # EncryptedSecret struct ("the secret value, AES-256-GCM-encrypted..."),
+  # not a credential. Same "specific labelled file" precedent as office's
+  # test_support.rs above.
+  '''crates/kms-stub/src/envelope\.rs''',
+  # venue — config/security.example.json: fabricated example values in a
+  # file explicitly named `*.example.*`, meant to be copied/edited, not run.
+  '''.*\.example\.[a-z]+$''',
 ]
 
 # Obvious placeholders that are safe to ignore anywhere they appear.
