@@ -33,7 +33,14 @@ jobs:
       - uses: actions/checkout@v4
       - name: Run gitleaks (current files, blocking)
         run: |
-          curl -fsSL https://raw.githubusercontent.com/cognitum-one/.github/main/gitleaks.toml -o .gitleaks.org.toml || true
+          # Only fetch the org config when no repo-local override exists — it
+          # won't be used otherwise, and leaving it sitting in the working
+          # tree makes it part of the --source . scan target: gitleaks then
+          # flags the file's OWN key-shaped placeholder strings (the exact
+          # patterns it lists to allow) as a false positive against itself.
+          if [ ! -f .gitleaks.toml ]; then
+            curl -fsSL https://raw.githubusercontent.com/cognitum-one/.github/main/gitleaks.toml -o .gitleaks.org.toml || true
+          fi
           V="${{ inputs.gitleaks-version }}"
           curl -fsSL "https://github.com/gitleaks/gitleaks/releases/download/v${V}/gitleaks_${V}_linux_x64.tar.gz" | tar -xzf - gitleaks
           CFG=""
@@ -54,7 +61,10 @@ jobs:
           fetch-depth: 0
       - name: Run gitleaks (full history, informational)
         run: |
-          curl -fsSL https://raw.githubusercontent.com/cognitum-one/.github/main/gitleaks.toml -o .gitleaks.org.toml || true
+          # See the "current files" job above for why this is conditional.
+          if [ ! -f .gitleaks.toml ]; then
+            curl -fsSL https://raw.githubusercontent.com/cognitum-one/.github/main/gitleaks.toml -o .gitleaks.org.toml || true
+          fi
           V="${{ inputs.gitleaks-version }}"
           curl -fsSL "https://github.com/gitleaks/gitleaks/releases/download/v${V}/gitleaks_${V}_linux_x64.tar.gz" | tar -xzf - gitleaks
           CFG=""
