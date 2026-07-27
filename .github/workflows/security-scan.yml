@@ -10,7 +10,14 @@ name: security-scan
 #   secrets-history-audit — FULL history, INFORMATIONAL, on the weekly schedule
 #                           (and manual dispatch) only. Surfaces removed/rotated
 #                           secrets as warnings; never blocks.
-# OSV policy: fails only on High/Critical vulnerabilities that have a fix.
+# OSV policy: fails only on High/Critical vulnerabilities that have a fix, AND only
+#   when the affected package can actually ship. A finding reachable ONLY through
+#   devDependencies (test runners, coverage tooling, linters) never reaches a
+#   deployed artifact, so it is reported as a WARNING instead of blocking every PR
+#   in the org. Dev-only status is PROVEN from the npm lockfile's own `dev` flag;
+#   anything not provably dev-only still blocks (fail-closed), which includes every
+#   non-npm ecosystem (Cargo, Go, PyPI) where no such distinction is recorded.
+#   Nothing is hidden: dev-only findings are printed and written to the job summary.
 
 on:
   workflow_call:
@@ -90,6 +97,100 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Write the OSV gate script
+        run: |
+          cat > .osv-gate.py <<'GATE_EOF'
+          import json, os, sys
+
+          # ---- Which (name, version) pairs are reachable ONLY via devDependencies? ----
+          # npm records this itself: in a lockfile v2/v3 `packages` map, an entry carries
+          # `dev: true` when nothing in the production graph reaches it. A package counts as
+          # dev-only for a given lockfile when EVERY entry for it in that lockfile is dev.
+          # Resolved per-lockfile and keyed by the scanner's own source path, so a package
+          # that is dev here and production there is never mistakenly excused.
+          def dev_only_pairs(lock_path):
+              out = {}
+              try:
+                  with open(lock_path) as fh:
+                      lock = json.load(fh)
+              except Exception:
+                  return out  # unreadable -> nothing is excused (fail-closed)
+              for path, meta in (lock.get("packages") or {}).items():
+                  if not path or not isinstance(meta, dict):
+                      continue  # "" is the root project itself
+                  name = meta.get("name") or path.split("node_modules/")[-1]
+                  ver = meta.get("version")
+                  if not name or not ver:
+                      continue
+                  is_dev = bool(meta.get("dev") or meta.get("devOptional"))
+                  key = (name, ver)
+                  # any non-dev occurrence wins -> the package can ship
+                  out[key] = is_dev and out.get(key, True)
+              return {k for k, v in out.items() if v}
+
+          try:
+              data = json.load(open("osv.json"))
+          except Exception:
+              sys.exit(0)
+
+          blocking, dev_only = [], []
+          for res in data.get("results", []):
+              src = ((res.get("source") or {}).get("path")) or ""
+              excused = dev_only_pairs(src) if src.endswith("package-lock.json") else set()
+              for pkg in res.get("packages", []):
+                  sev = {}
+                  for grp in pkg.get("groups", []):
+                      for vid in grp.get("ids", []):
+                          sev[vid] = grp.get("max_severity", "") or "0"
+                  name = pkg["package"]["name"]
+                  ver = pkg["package"]["version"]
+                  for vuln in pkg.get("vulnerabilities", []):
+                      fixed = any(
+                          "fixed" in ev
+                          for aff in vuln.get("affected", [])
+                          for rng in aff.get("ranges", [])
+                          for ev in rng.get("events", [])
+                      )
+                      try:
+                          score = float(sev.get(vuln["id"], "0") or 0)
+                      except Exception:
+                          score = 0.0
+                      if not (fixed and score >= 7.0):
+                          continue
+                      row = (name, ver, vuln["id"], score, src)
+                      (dev_only if (name, ver) in excused else blocking).append(row)
+
+          def fmt(rows):
+              return [
+                  "  CVSS %.1f  %s@%s  %s  (%s)" % (s, n, v, i, p or "?")
+                  for n, v, i, s, p in sorted(rows, key=lambda x: -x[3])
+              ]
+
+          if dev_only:
+              print(
+                  "::warning::%d High/Critical fixable vulnerability(ies) in DEV-ONLY dependencies "
+                  "(not shipped; not blocking) — fix them on the normal upgrade cadence:" % len(dev_only)
+              )
+              for line in fmt(dev_only):
+                  print(line)
+              summary = os.environ.get("GITHUB_STEP_SUMMARY")
+              if summary:
+                  with open(summary, "a") as fh:
+                      fh.write("## \u26a0\ufe0f %d dev-only High/Critical advisory(ies)\n" % len(dev_only))
+                      fh.write("Reachable only through devDependencies, so they never reach a deployed "
+                               "artifact and do not block. Still worth clearing.\n\n")
+                      for line in fmt(dev_only):
+                          fh.write("-%s\n" % line[1:])
+
+          if blocking:
+              print("::error::%d High/Critical vulnerabilities WITH fixes available:" % len(blocking))
+              for line in fmt(blocking):
+                  print(line)
+              sys.exit(1)
+
+          print("OK: no shippable High/Critical fixable vulnerabilities. "
+                "(Dev-only, lower-severity, and unfixable advisories above are informational.)")
+          GATE_EOF
       - name: Run OSV-Scanner
         run: |
           V="${{ inputs.osv-version }}"
@@ -100,25 +201,6 @@ jobs:
           # Machine-readable for the gate
           ./osv-scanner --recursive --format json . > osv.json 2>/dev/null || true
           if [ ! -s osv.json ]; then echo "no OSV results (no manifests?)"; exit 0; fi
-          # Gate: fail ONLY on High/Critical (CVSS>=7) vulns that have a fix version.
-          python3 -c '
-          import json,sys
-          try: d=json.load(open("osv.json"))
-          except Exception: sys.exit(0)
-          bad=[]
-          for res in d.get("results",[]):
-           for p in res.get("packages",[]):
-            sev={}
-            for g in p.get("groups",[]):
-             for i in g.get("ids",[]): sev[i]=g.get("max_severity","") or "0"
-            for v in p.get("vulnerabilities",[]):
-             fx=any("fixed" in e for a in v.get("affected",[]) for r in a.get("ranges",[]) for e in r.get("events",[]))
-             try: s=float(sev.get(v["id"],"0") or 0)
-             except Exception: s=0.0
-             if fx and s>=7.0: bad.append((p["package"]["name"],p["package"]["version"],v["id"],s))
-          if bad:
-           print("::error::%d High/Critical vulnerabilities WITH fixes available:"%len(bad))
-           for n,ver,i,s in sorted(bad,key=lambda x:-x[3]): print("  CVSS %.1f  %s@%s  %s"%(s,n,ver,i))
-           sys.exit(1)
-          print("OK: no High/Critical fixable vulnerabilities. (Lower-severity / unfixable advisories above are informational.)")
-          '
+          # Gate: fail on High/Critical (CVSS>=7) fixable vulns that can SHIP.
+          # Dev-only npm findings are reported but do not block (see header).
+          python3 .osv-gate.py
