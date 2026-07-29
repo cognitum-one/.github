@@ -48,7 +48,7 @@ concurrency:
 
 env:
   # Finalized organization policy revision. Repin all eight hashes atomically.
-  OSV_POLICY_COMMIT: "16eb59995aa7378380c9b471ecd164cef42f8a87"
+  OSV_POLICY_COMMIT: "75c052e43ef18da1d813befbfcbe3c7e70ed309b"
   OSV_GATE_SHA256: "a3e29809c90b583f659e7a6f12c2febd3d9c1c193c82de8f2b5510132da5b0a9"
   OSV_GATE_TEST_SHA256: "e6f51ee132093c1834358419d2d01ac23be920e2573409c68be13e1b45fa62ab"
   OSV_CONFIG_SHA256: "5bd10fc47448111e6d8bed4682b9b80e4c420ca6cb0808a252b8c6d8cd920c34"

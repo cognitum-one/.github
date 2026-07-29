@@ -4,15 +4,22 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 from pathlib import Path
 import re
+import subprocess
 import sys
 import tempfile
 import unittest
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from verify_static_ui_workflows import WorkflowPolicyError, verify
+from verify_static_ui_workflows import (
+    EXPECTED_ORG_POLICY,
+    POLICY_ARTIFACTS,
+    WorkflowPolicyError,
+    verify,
+)
 
 
 class StaticUiWorkflowPolicyTests(unittest.TestCase):
@@ -104,7 +111,7 @@ class StaticUiWorkflowPolicyTests(unittest.TestCase):
         sources = copy.deepcopy(self.sources)
         for target in ("security", "release", "revision"):
             sources[target] = sources[target].replace(
-                "16eb59995aa7378380c9b471ecd164cef42f8a87",
+                "75c052e43ef18da1d813befbfcbe3c7e70ed309b",
                 "1" * 40,
                 1,
             )
@@ -124,6 +131,28 @@ class StaticUiWorkflowPolicyTests(unittest.TestCase):
             WorkflowPolicyError, "approved organization policy"
         ):
             self._verify(sources)
+
+    def test_policy_commit_contains_the_exact_hash_verified_artifacts(self) -> None:
+        policy_commit = EXPECTED_ORG_POLICY["OSV_POLICY_COMMIT"]
+        for environment_name, artifact in POLICY_ARTIFACTS.items():
+            if environment_name not in EXPECTED_ORG_POLICY:
+                continue
+            with self.subTest(artifact=artifact):
+                result = subprocess.run(
+                    [
+                        "git",
+                        "show",
+                        f"{policy_commit}:security/{artifact}",
+                    ],
+                    cwd=self.root,
+                    check=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                )
+                self.assertEqual(
+                    hashlib.sha256(result.stdout).hexdigest(),
+                    EXPECTED_ORG_POLICY[environment_name],
+                )
 
     def test_release_companion_hashes_must_match_committed_bytes(self) -> None:
         sources = copy.deepcopy(self.sources)
