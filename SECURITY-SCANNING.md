@@ -92,7 +92,14 @@ full-history job is informational with respect to findings, but tool download,
 integrity, and parse failures still fail that job rather than manufacturing a
 clean result. Every fixable High/Critical OSV finding blocks, including a
 finding whose candidate-controlled lock metadata labels it development-only.
-Fix or remove such dependencies rather than weakening the shared scanner.
+Fix or remove such dependencies rather than weakening the shared scanner. The
+gate validates every affected range before evaluating severity. A severityless
+advisory whose ranges contain no fixed version is informational under this
+specific High/Critical-with-fix policy; it is not an advisory allowlist or an
+invented CVSS score. Any advisory with a fixed version still requires a valid,
+finite OSV severity from 0.0 through 10.0 and fails closed when that severity is
+missing or invalid. A non-empty malformed severity remains a malformed report
+even when the advisory has no fix.
 
 The SHA-pinned `docker/setup-buildx-action` commit
 `8d2750c68a42422c14e847fe6c8ac0403b4cbd6f` is deliberately given no
@@ -140,12 +147,12 @@ affected. The correction is intentionally narrower than a general allowlist:
 
 Wrong repositories, paths, versions, dependency ranges, nested copies,
 advisory IDs, RSC surfaces, symlinks, oversized/unreadable source, duplicate
-JSON keys, malformed severity/report data, or an expired correction remain
-blocking. The organization security/release maintainers own the exception.
-Before expiry they must recheck the upstream maintainer advisory and OSV data,
-then either remove the correction or land a newly reviewed policy commit,
-expiry, hashes, and adversarial tests. Expiry itself blocks; it never silently
-extends.
+JSON keys, malformed report data, missing/invalid severity on a fixable
+finding, or an expired correction remain blocking. The organization
+security/release maintainers own the exception. Before expiry they must recheck
+the upstream maintainer advisory and OSV data, then either remove the
+correction or land a newly reviewed policy commit, expiry, hashes, and
+adversarial tests. Expiry itself blocks; it never silently extends.
 
 ## Static-UI runtime evidence
 
