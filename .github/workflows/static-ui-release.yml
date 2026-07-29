@@ -16,7 +16,9 @@ on:
         description: Dedicated staging builder identity; never a runtime identity.
         required: true
       static_ui_beacon_read_token:
-        description: Read-only token for the exact private Beacon commit (website only).
+        description: >-
+          Read-only token for the exact private website/Beacon identities and
+          Beacon commit (website only).
         required: false
     outputs:
       image_name:
@@ -251,9 +253,11 @@ jobs:
           IMAGE_TAG: ${{ steps.release_inputs.outputs.image_tag }}
           NONCE: ${{ steps.release_inputs.outputs.nonce }}
           REPOSITORY_VISIBILITY: ${{ github.event.repository.visibility }}
+          STATIC_UI_IDENTITY_TOKEN: ${{ github.repository == 'cognitum-one/website' && secrets.static_ui_beacon_read_token || github.token }}
         run: |
           set -euo pipefail
           test "$REPOSITORY_VISIBILITY" = "private"
+          test -n "$STATIC_UI_IDENTITY_TOKEN"
           POLICY_DIR="$RUNNER_TEMP/static-ui-policy"
           OUTPUT_DIR="$RUNNER_TEMP/static-ui-release-evidence"
           arguments=(
@@ -271,6 +275,7 @@ jobs:
             test -n "$BEACON_ROOT"
             arguments+=(--beacon-repository-root "$BEACON_ROOT")
           fi
+          GH_TOKEN="$STATIC_UI_IDENTITY_TOKEN" \
           GITHUB_REPOSITORY_VISIBILITY="$REPOSITORY_VISIBILITY" \
             python3 "$POLICY_DIR/static_ui_runtime_receipt.py" "${arguments[@]}"
           rm -f -- "$OUTPUT_DIR/management-vite.env"

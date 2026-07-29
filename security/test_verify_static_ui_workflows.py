@@ -196,6 +196,10 @@ class StaticUiWorkflowPolicyTests(unittest.TestCase):
                 'GITHUB_REPOSITORY_VISIBILITY="$REPOSITORY_VISIBILITY"',
                 'GITHUB_REPOSITORY_VISIBILITY=""',
             ),
+            (
+                'GH_TOKEN="$STATIC_UI_IDENTITY_TOKEN"',
+                'GH_TOKEN=""',
+            ),
         )
         for old, new in mutations:
             with self.subTest(old=old):
@@ -251,6 +255,10 @@ class StaticUiWorkflowPolicyTests(unittest.TestCase):
             (
                 "permissions:\n  attestations: write",
                 "permissions:\n  attestations: write\n  packages: write",
+            ),
+            (
+                'GH_TOKEN="$STATIC_UI_IDENTITY_TOKEN"',
+                'GH_TOKEN=""',
             ),
         )
         for old, new in mutations:
