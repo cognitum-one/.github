@@ -57,7 +57,7 @@ env:
   STATIC_UI_RECEIPT_TEST_SHA256: "eeb3b1c0fabfee62cace50fae531c55db4a050482bc14eec875e501aae335666"
   # Two-commit bootstrap: replace with the first PR2 content commit, then commit
   # only this pin/hash update. Zero is intentionally non-runnable/fail-closed.
-  STATIC_UI_WORKFLOW_COMMIT: "0000000000000000000000000000000000000000"
+  STATIC_UI_WORKFLOW_COMMIT: "e0a423bede1c7855e62b27832ec5cc0167c13d03"
   STATIC_UI_RELEASE_GATE_SHA256: "bfe974d10883013f843c59a2f025f0c6b7d64f4f18bc7edb2e66b650fb30b7a8"
   STATIC_UI_RELEASE_GATE_TEST_SHA256: "9c92da34a9d7601cc6387aabcbb3084f9b43083ec54efc46b12e17cb7f029517"
   STATIC_UI_PREDICATE_TYPE: "https://cognitum.one/attestations/static-ui-runtime/v1"

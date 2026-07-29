@@ -20,7 +20,7 @@ jobs:
       contents: read
     # PR2 bootstrap: replace this fail-closed zero ref with the reviewed PR2
     # content commit before merging the final pin-only commit.
-    uses: cognitum-one/.github/.github/workflows/security-scan.yml@0000000000000000000000000000000000000000
+    uses: cognitum-one/.github/.github/workflows/security-scan.yml@e0a423bede1c7855e62b27832ec5cc0167c13d03
     # Required only for cognitum-one/website. Other repositories may omit the
     # mapping; the shared workflow never receives unrelated repository secrets.
     secrets:
