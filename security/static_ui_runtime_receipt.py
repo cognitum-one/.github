@@ -2579,14 +2579,15 @@ def _read_external_nonce(path: Path, output_directory: Path) -> str:
 
 
 def _docker_image_inspect(image_ref: str) -> Any:
+    # ``docker image inspect --platform`` is not available on every supported
+    # Docker CLI. The inspected image's Os/Architecture fields are checked
+    # fail-closed by validate_image_inspect immediately after this call.
     return _strict_json_loads(
         _run(
             [
                 "docker",
                 "image",
                 "inspect",
-                "--platform",
-                "linux/amd64",
                 image_ref,
             ],
             timeout=120,
