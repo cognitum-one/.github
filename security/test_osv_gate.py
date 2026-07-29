@@ -111,6 +111,16 @@ class OsvGateTest(unittest.TestCase):
         self.assertEqual(len(blocking), 1)
         self.assertEqual(reviewed, [])
 
+    def test_duplicate_manifest_keys_do_not_broaden_exception(self) -> None:
+        self.management_manifest.write_text(
+            '{"dependencies":{"react-router-dom":"7.18.2"},'
+            '"dependencies":{"react-router-dom":"7.18.2"}}',
+            encoding="utf-8",
+        )
+        blocking, reviewed = self.evaluate(report(str(self.management_lock)))
+        self.assertEqual(len(blocking), 1)
+        self.assertEqual(reviewed, [])
+
     def test_exception_expires_fail_closed(self) -> None:
         blocking, reviewed = evaluate(
             report(str(self.management_lock)),
@@ -196,6 +206,12 @@ class OsvGateTest(unittest.TestCase):
         )
         self.assertEqual(len(blocking), 1)
         self.assertEqual(reviewed, [])
+
+    def test_missing_severity_fails_closed(self) -> None:
+        payload = report(str(self.management_lock))
+        payload["results"][0]["packages"][0]["groups"] = []
+        with self.assertRaisesRegex(ValueError, "severity is missing"):
+            self.evaluate(payload)
 
     def test_malformed_report_fails_closed(self) -> None:
         with self.assertRaises(ValueError):

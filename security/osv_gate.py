@@ -71,9 +71,21 @@ def _relative_source(source: str, root: Path) -> str | None:
         return None
 
 
+def _strict_json_loads(source: str) -> Any:
+    def object_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        value: dict[str, Any] = {}
+        for key, item in pairs:
+            if key in value:
+                raise ValueError(f"duplicate JSON key: {key}")
+            value[key] = item
+        return value
+
+    return json.loads(source, object_pairs_hook=object_pairs)
+
+
 def _read_lock(source: str) -> dict[str, Any] | None:
     try:
-        value = json.loads(Path(source).read_text(encoding="utf-8"))
+        value = _strict_json_loads(Path(source).read_text(encoding="utf-8"))
     except (OSError, ValueError, TypeError):
         return None
     return value if isinstance(value, dict) else None
@@ -274,13 +286,19 @@ def evaluate(
             version = package_identity.get("version")
             if not isinstance(name, str) or not isinstance(version, str):
                 raise ValueError("OSV package name/version is invalid")
-            severity: dict[str, str] = {}
+            severity: dict[str, list[float]] = {}
             for group in package_record.get("groups") or []:
                 if not isinstance(group, dict):
                     continue
                 for advisory in group.get("ids") or []:
                     if isinstance(advisory, str):
-                        severity[advisory] = group.get("max_severity") or "0"
+                        try:
+                            score = float(group.get("max_severity"))
+                        except (TypeError, ValueError):
+                            raise ValueError(
+                                f"OSV severity is missing or invalid for {advisory}"
+                            )
+                        severity.setdefault(advisory, []).append(score)
             vulnerabilities = package_record.get("vulnerabilities")
             if not isinstance(vulnerabilities, list):
                 raise ValueError("OSV vulnerabilities is not an array")
@@ -298,10 +316,10 @@ def evaluate(
                     if isinstance(range_record, dict)
                     for event in range_record.get("events") or []
                 )
-                try:
-                    score = float(severity.get(advisory, "0") or 0)
-                except (TypeError, ValueError):
-                    score = 0.0
+                advisory_scores = severity.get(advisory)
+                if not advisory_scores:
+                    raise ValueError(f"OSV severity is missing for {advisory}")
+                score = max(advisory_scores)
                 if not (fixed and score >= 7.0):
                     continue
                 row = (name, version, advisory, score, source)
@@ -332,7 +350,7 @@ def main() -> int:
     root = Path(os.environ.get("OSV_REPOSITORY_ROOT", ".")).resolve()
     repository = os.environ.get("GITHUB_REPOSITORY", "")
     try:
-        report = json.loads(report_path.read_text(encoding="utf-8"))
+        report = _strict_json_loads(report_path.read_text(encoding="utf-8"))
         if not isinstance(report, dict):
             raise ValueError("OSV report root is not an object")
         blocking, reviewed = evaluate(
