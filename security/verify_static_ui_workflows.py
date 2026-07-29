@@ -16,6 +16,21 @@ ACTION_RE = re.compile(r"^\s*(?:-\s*)?uses:\s*([^@\s]+)@([^\s#]+)", re.MULTILINE
 ENV_VALUE_RE = re.compile(r'^\s{2}([A-Z][A-Z0-9_]+):\s*"([^"]+)"\s*$', re.MULTILINE)
 ZERO_SHA = "0" * 40
 MAX_WORKFLOW_BYTES = 512 * 1024
+EXPECTED_BUILDKIT_IMAGE = (
+    "moby/buildkit@"
+    "sha256:0168606be2315b7c807a03b3d8aa79beefdb31c98740cebdffdfeebf31190c9f"
+)
+EXPECTED_BUILDKITD_FLAGS = "--oci-worker-net=bridge"
+EXPECTED_BUILDX_VERSION = "v0.33.0"
+EXPECTED_BUILDX_REVISION = "f7897eba028583e0071642db3c011e860444f8cf"
+EXPECTED_BUILDX_LINUX_AMD64_SHA256 = (
+    "9426a15411f35f635afef3f5d3bae53155c3e30d26dee430cc968e13d34be49f"
+)
+EXPECTED_DOCKER_CONFIG = "$RUNNER_TEMP/static-ui-docker-config"
+EXPECTED_BUILDX_URL = (
+    "https://github.com/docker/buildx/releases/download/"
+    "v0.33.0/buildx-v0.33.0.linux-amd64"
+)
 
 EXPECTED_ACTIONS = {
     "actions/attest": "f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6",
@@ -120,6 +135,191 @@ def _verify_actions(*sources: str) -> None:
         raise WorkflowPolicyError("no pinned Actions were found")
 
 
+def _verify_trusted_buildkit(source: str, label: str) -> None:
+    if "--allow-insecure-entitlement" in source:
+        raise WorkflowPolicyError(
+            f"{label} must not enable a BuildKit insecure entitlement"
+        )
+    if any(
+        fragment in source
+        for fragment in ("network=host", "--network host", "--network=host")
+    ):
+        raise WorkflowPolicyError(
+            f"{label} must not select host networking for BuildKit or a build"
+        )
+    if re.search(
+        r"--allow(?:=|\s+)(?:network\.host|security\.insecure)(?:\s|$)",
+        source,
+    ):
+        raise WorkflowPolicyError(
+            f"{label} must not grant a client-side BuildKit entitlement"
+        )
+
+    action = "docker/setup-buildx-action"
+    marker = f"uses: {action}@{EXPECTED_ACTIONS[action]}"
+    starts = [match.start() for match in re.finditer(r"(?m)^      - ", source)]
+    steps = [
+        source[start : starts[index + 1] if index + 1 < len(starts) else len(source)]
+        for index, start in enumerate(starts)
+    ]
+    install_steps = [
+        step
+        for step in steps
+        if "name: Install the exact verified Buildx client" in step
+    ]
+    if len(install_steps) != 1:
+        raise WorkflowPolicyError(
+            f"{label} must install exactly one hash-verified Buildx client"
+        )
+    install_step = install_steps[0]
+    matching_steps = [step for step in steps if marker in step]
+    if len(matching_steps) != 1:
+        raise WorkflowPolicyError(
+            f"{label} must configure exactly one trusted Docker builder"
+        )
+    step = matching_steps[0]
+    if source.find(install_step) >= source.find(step):
+        raise WorkflowPolicyError(
+            f"{label} must verify Buildx before the setup action can execute it"
+        )
+
+    docker_configs = re.findall(
+        r'(?m)^          DOCKER_CONFIG="([^"]+)"\s*$',
+        install_step,
+    )
+    if docker_configs != [EXPECTED_DOCKER_CONFIG]:
+        raise WorkflowPolicyError(
+            f"{label} must isolate Buildx in the reviewed job-scoped DOCKER_CONFIG"
+        )
+    if source.count("DOCKER_CONFIG") != install_step.count("DOCKER_CONFIG"):
+        raise WorkflowPolicyError(
+            f"{label} must not override DOCKER_CONFIG outside the verified installer"
+        )
+
+    buildx_environment = re.findall(
+        r'(?m)^          (BUILDX_[A-Z0-9_]+):\s*"([^"]+)"\s*$',
+        install_step,
+    )
+    if buildx_environment != [
+        ("BUILDX_VERSION", EXPECTED_BUILDX_VERSION),
+        ("BUILDX_REVISION", EXPECTED_BUILDX_REVISION),
+        ("BUILDX_LINUX_AMD64_SHA256", EXPECTED_BUILDX_LINUX_AMD64_SHA256),
+    ]:
+        raise WorkflowPolicyError(
+            f"{label} Buildx version, revision, or checksum differs from policy"
+        )
+
+    run_match = re.search(
+        r"(?m)^        run: \|\n((?:          [^\n]*\n?)*)",
+        install_step,
+    )
+    if run_match is None:
+        raise WorkflowPolicyError(
+            f"{label} must use the reviewed Buildx installation grammar"
+        )
+    install_script = "\n".join(
+        line.removeprefix("          ") for line in run_match.group(1).splitlines()
+    )
+    expected_install_script = "\n".join(
+        (
+            "set -euo pipefail",
+            'DOCKER_CONFIG="$RUNNER_TEMP/static-ui-docker-config"',
+            "export DOCKER_CONFIG",
+            'test ! -e "$DOCKER_CONFIG" && test ! -L "$DOCKER_CONFIG"',
+            'install -d -m 0700 "$DOCKER_CONFIG"',
+            'install -d -m 0700 "$DOCKER_CONFIG/cli-plugins"',
+            'BUILDX_DOWNLOAD="$RUNNER_TEMP/buildx-v0.33.0.linux-amd64"',
+            'test ! -e "$BUILDX_DOWNLOAD" && test ! -L "$BUILDX_DOWNLOAD"',
+            "curl --proto '=https' --tlsv1.2 -fsSLo \"$BUILDX_DOWNLOAD\" \\",
+            f'  "{EXPECTED_BUILDX_URL}"',
+            (
+                'echo "${BUILDX_LINUX_AMD64_SHA256}  ${BUILDX_DOWNLOAD}" '
+                "| sha256sum -c -"
+            ),
+            'BUILDX_PLUGIN="$DOCKER_CONFIG/cli-plugins/docker-buildx"',
+            'install -m 0755 "$BUILDX_DOWNLOAD" "$BUILDX_PLUGIN"',
+            'test -f "$BUILDX_PLUGIN" && test ! -L "$BUILDX_PLUGIN"',
+            (
+                'EXPECTED_BUILDX="github.com/docker/buildx '
+                '${BUILDX_VERSION} ${BUILDX_REVISION}"'
+            ),
+            'test "$("$BUILDX_PLUGIN" version)" = "$EXPECTED_BUILDX"',
+            'test "$(docker buildx version)" = "$EXPECTED_BUILDX"',
+            'printf \'%s\\n\' "DOCKER_CONFIG=$DOCKER_CONFIG" >> "$GITHUB_ENV"',
+        )
+    )
+    if install_script != expected_install_script:
+        raise WorkflowPolicyError(
+            f"{label} must use the exact hash-before-execution Buildx installation"
+        )
+
+    if re.search(r"(?m)^\s+install\s*:", step):
+        raise WorkflowPolicyError(
+            f"{label} must not install the deprecated docker build alias"
+        )
+    if re.search(r"(?m)^\s+(?:version|cache-binary)\s*:", step):
+        raise WorkflowPolicyError(
+            f"{label} setup action must not download or cache an alternate Buildx binary"
+        )
+    driver = re.findall(r"(?m)^          driver:\s*(\S+)\s*$", step)
+    if driver != ["docker-container"]:
+        raise WorkflowPolicyError(
+            f"{label} must use the docker-container Buildx driver"
+        )
+
+    driver_options_match = re.search(
+        r"(?m)^          driver-opts: \|\n((?:            [^\n]*\n?)*)",
+        step,
+    )
+    if driver_options_match is None:
+        raise WorkflowPolicyError(
+            f"{label} must use the reviewed multiline driver-opts grammar"
+        )
+    driver_options = [
+        line.strip()
+        for line in driver_options_match.group(1).splitlines()
+        if line.strip()
+    ]
+    image_options = [
+        option.removeprefix("image=")
+        for option in driver_options
+        if option.startswith("image=")
+    ]
+    if len(image_options) != 1:
+        raise WorkflowPolicyError(f"{label} must configure exactly one BuildKit image")
+    image = image_options[0]
+    if not re.fullmatch(r"moby/buildkit@sha256:[0-9a-f]{64}", image):
+        raise WorkflowPolicyError(
+            f"{label} BuildKit image must use an immutable sha256 digest"
+        )
+    if image != EXPECTED_BUILDKIT_IMAGE:
+        raise WorkflowPolicyError(
+            f"{label} BuildKit image differs from the approved digest"
+        )
+    if driver_options != [f"image={EXPECTED_BUILDKIT_IMAGE}", "network=bridge"]:
+        raise WorkflowPolicyError(
+            f"{label} contains an unreviewed Buildx driver option"
+        )
+
+    buildkitd_flags = re.findall(
+        r"(?m)^          buildkitd-flags:\s*(\S.*)\s*$",
+        step,
+    )
+    if buildkitd_flags != [EXPECTED_BUILDKITD_FLAGS]:
+        raise WorkflowPolicyError(
+            f"{label} must explicitly reset BuildKit defaults with safe daemon flags"
+        )
+
+    action_inputs = re.findall(
+        r"(?m)^          ([a-z][a-z0-9-]*):(?:\s.*)?$",
+        step,
+    )
+    if action_inputs != ["driver", "driver-opts", "buildkitd-flags"]:
+        raise WorkflowPolicyError(
+            f"{label} Buildx action inputs differ from the reviewed grammar"
+        )
+
+
 def _verify_common(source: str, label: str) -> None:
     _require(
         source,
@@ -143,6 +343,7 @@ def _verify_common(source: str, label: str) -> None:
 
 def _verify_security(source: str) -> None:
     _verify_common(source, "security workflow")
+    _verify_trusted_buildkit(source, "security workflow")
     required = (
         "static_ui_beacon_read_token:",
         "fetch-depth: 0",
@@ -204,6 +405,7 @@ def _verify_security(source: str) -> None:
 
 def _verify_release(source: str, allow_unresolved_self_pin: bool) -> None:
     _verify_common(source, "release workflow")
+    _verify_trusted_buildkit(source, "release workflow")
     required = (
         "attestations: write",
         "id-token: write",

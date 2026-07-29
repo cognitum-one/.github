@@ -175,6 +175,36 @@ jobs:
           python3 "$POLICY_DIR/test_run_osv_scan.py"
           python3 "$POLICY_DIR/test_static_ui_runtime_receipt.py"
 
+      - name: Install the exact verified Buildx client
+        if: >-
+          ${{
+            github.repository == 'cognitum-one/website' ||
+            github.repository == 'cognitum-one/management'
+          }}
+        env:
+          BUILDX_VERSION: "v0.33.0"
+          BUILDX_REVISION: "f7897eba028583e0071642db3c011e860444f8cf"
+          BUILDX_LINUX_AMD64_SHA256: "9426a15411f35f635afef3f5d3bae53155c3e30d26dee430cc968e13d34be49f"
+        run: |
+          set -euo pipefail
+          DOCKER_CONFIG="$RUNNER_TEMP/static-ui-docker-config"
+          export DOCKER_CONFIG
+          test ! -e "$DOCKER_CONFIG" && test ! -L "$DOCKER_CONFIG"
+          install -d -m 0700 "$DOCKER_CONFIG"
+          install -d -m 0700 "$DOCKER_CONFIG/cli-plugins"
+          BUILDX_DOWNLOAD="$RUNNER_TEMP/buildx-v0.33.0.linux-amd64"
+          test ! -e "$BUILDX_DOWNLOAD" && test ! -L "$BUILDX_DOWNLOAD"
+          curl --proto '=https' --tlsv1.2 -fsSLo "$BUILDX_DOWNLOAD" \
+            "https://github.com/docker/buildx/releases/download/v0.33.0/buildx-v0.33.0.linux-amd64"
+          echo "${BUILDX_LINUX_AMD64_SHA256}  ${BUILDX_DOWNLOAD}" | sha256sum -c -
+          BUILDX_PLUGIN="$DOCKER_CONFIG/cli-plugins/docker-buildx"
+          install -m 0755 "$BUILDX_DOWNLOAD" "$BUILDX_PLUGIN"
+          test -f "$BUILDX_PLUGIN" && test ! -L "$BUILDX_PLUGIN"
+          EXPECTED_BUILDX="github.com/docker/buildx ${BUILDX_VERSION} ${BUILDX_REVISION}"
+          test "$("$BUILDX_PLUGIN" version)" = "$EXPECTED_BUILDX"
+          test "$(docker buildx version)" = "$EXPECTED_BUILDX"
+          printf '%s\n' "DOCKER_CONFIG=$DOCKER_CONFIG" >> "$GITHUB_ENV"
+
       - name: Set up the trusted Docker builder
         if: >-
           ${{
@@ -183,7 +213,11 @@ jobs:
           }}
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
         with:
-          install: true
+          driver: docker-container
+          driver-opts: |
+            image=moby/buildkit@sha256:0168606be2315b7c807a03b3d8aa79beefdb31c98740cebdffdfeebf31190c9f
+            network=bridge
+          buildkitd-flags: --oci-worker-net=bridge
 
       - name: Checkout the exact Beacon submodule source outside the candidate
         id: beacon

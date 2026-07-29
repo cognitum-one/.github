@@ -15,6 +15,13 @@ import unittest
 sys.path.insert(0, str(Path(__file__).parent))
 
 from verify_static_ui_workflows import (
+    EXPECTED_BUILDKITD_FLAGS,
+    EXPECTED_BUILDKIT_IMAGE,
+    EXPECTED_BUILDX_LINUX_AMD64_SHA256,
+    EXPECTED_BUILDX_REVISION,
+    EXPECTED_BUILDX_URL,
+    EXPECTED_BUILDX_VERSION,
+    EXPECTED_DOCKER_CONFIG,
     EXPECTED_ORG_POLICY,
     POLICY_ARTIFACTS,
     WorkflowPolicyError,
@@ -106,6 +113,273 @@ class StaticUiWorkflowPolicyTests(unittest.TestCase):
                 self._verify(allow_unresolved_self_pin=False)
         else:
             self._verify(allow_unresolved_self_pin=False)
+
+    def test_buildkit_builder_is_immutable_non_aliasing_and_non_entitled(
+        self,
+    ) -> None:
+        image_line = f"            image={EXPECTED_BUILDKIT_IMAGE}"
+        flags_line = f"          buildkitd-flags: {EXPECTED_BUILDKITD_FLAGS}"
+        mutations = (
+            (
+                "mutable image tag",
+                image_line,
+                "            image=moby/buildkit:buildx-stable-1",
+                "immutable sha256 digest",
+            ),
+            (
+                "missing image digest",
+                image_line,
+                "            image=moby/buildkit",
+                "immutable sha256 digest",
+            ),
+            (
+                "unapproved image digest",
+                image_line,
+                f"            image=moby/buildkit@sha256:{'0' * 64}",
+                "approved digest",
+            ),
+            (
+                "insecure network entitlement",
+                flags_line,
+                (
+                    "          buildkitd-flags: "
+                    "--allow-insecure-entitlement network.host"
+                ),
+                "insecure entitlement",
+            ),
+            (
+                "insecure security entitlement",
+                flags_line,
+                (
+                    "          buildkitd-flags: "
+                    "--allow-insecure-entitlement security.insecure"
+                ),
+                "insecure entitlement",
+            ),
+            (
+                "deprecated install alias enabled",
+                flags_line,
+                f"{flags_line}\n          install: true",
+                "deprecated docker build alias",
+            ),
+            (
+                "deprecated install alias declared",
+                flags_line,
+                f"{flags_line}\n          install: false",
+                "deprecated docker build alias",
+            ),
+            (
+                "safe daemon flags omitted",
+                flags_line,
+                "          # buildkitd-flags intentionally removed",
+                "safe daemon flags",
+            ),
+            (
+                "unreviewed host-network driver option",
+                "            network=bridge",
+                "            network=host",
+                "host networking",
+            ),
+            (
+                "client network entitlement",
+                flags_line,
+                (
+                    f"{flags_line}\n"
+                    "      - name: Mutated client entitlement\n"
+                    "        run: docker buildx build --allow network.host ."
+                ),
+                "client-side BuildKit entitlement",
+            ),
+            (
+                "client host network",
+                flags_line,
+                (
+                    f"{flags_line}\n"
+                    "      - name: Mutated client network\n"
+                    "        run: docker buildx build --network=host ."
+                ),
+                "host networking",
+            ),
+        )
+        for target in ("security", "release"):
+            for name, old, new, error in mutations:
+                with self.subTest(target=target, mutation=name):
+                    with self.assertRaisesRegex(WorkflowPolicyError, error):
+                        self._verify(self._mutate(target, old, new))
+
+    def test_buildx_client_is_verified_before_setup_without_action_downloads(
+        self,
+    ) -> None:
+        version_line = f'          BUILDX_VERSION: "{EXPECTED_BUILDX_VERSION}"'
+        revision_line = f'          BUILDX_REVISION: "{EXPECTED_BUILDX_REVISION}"'
+        checksum_line = (
+            "          BUILDX_LINUX_AMD64_SHA256: "
+            f'"{EXPECTED_BUILDX_LINUX_AMD64_SHA256}"'
+        )
+        docker_config_line = f'          DOCKER_CONFIG="{EXPECTED_DOCKER_CONFIG}"'
+        docker_config_guard = (
+            '          test ! -e "$DOCKER_CONFIG" && test ! -L "$DOCKER_CONFIG"'
+        )
+        download_guard = (
+            '          test ! -e "$BUILDX_DOWNLOAD" && ' 'test ! -L "$BUILDX_DOWNLOAD"'
+        )
+        url_line = f'            "{EXPECTED_BUILDX_URL}"'
+        hash_check_line = (
+            '          echo "${BUILDX_LINUX_AMD64_SHA256}  '
+            '${BUILDX_DOWNLOAD}" | sha256sum -c -'
+        )
+        destination_line = (
+            '          BUILDX_PLUGIN="$DOCKER_CONFIG/cli-plugins/docker-buildx"'
+        )
+        version_assertion = (
+            '          test "$(docker buildx version)" = "$EXPECTED_BUILDX"'
+        )
+        config_propagation = (
+            "          printf '%s\\n' "
+            '"DOCKER_CONFIG=$DOCKER_CONFIG" >> "$GITHUB_ENV"'
+        )
+        setup_flags_line = f"          buildkitd-flags: {EXPECTED_BUILDKITD_FLAGS}"
+        mutations = (
+            (
+                "missing version",
+                version_line,
+                "          # BUILDX_VERSION intentionally removed",
+                "version, revision, or checksum",
+            ),
+            (
+                "mutable latest version",
+                version_line,
+                '          BUILDX_VERSION: "latest"',
+                "version, revision, or checksum",
+            ),
+            (
+                "wrong version",
+                version_line,
+                '          BUILDX_VERSION: "v0.32.1"',
+                "version, revision, or checksum",
+            ),
+            (
+                "wrong revision",
+                revision_line,
+                f'          BUILDX_REVISION: "{"1" * 40}"',
+                "version, revision, or checksum",
+            ),
+            (
+                "missing checksum",
+                checksum_line,
+                "          # BUILDX_LINUX_AMD64_SHA256 intentionally removed",
+                "version, revision, or checksum",
+            ),
+            (
+                "wrong checksum",
+                checksum_line,
+                f'          BUILDX_LINUX_AMD64_SHA256: "{"2" * 64}"',
+                "version, revision, or checksum",
+            ),
+            (
+                "unreviewed release URL",
+                url_line,
+                '            "https://github.com/docker/buildx/releases/latest/download/buildx-linux-amd64"',
+                "hash-before-execution",
+            ),
+            (
+                "checksum command removed",
+                hash_check_line,
+                "          # sha256 verification intentionally removed",
+                "hash-before-execution",
+            ),
+            (
+                "shared plugin destination",
+                destination_line,
+                '          BUILDX_PLUGIN="/tmp/shared-cli-plugins/docker-buildx"',
+                "hash-before-execution",
+            ),
+            (
+                "job-scoped Docker config removed",
+                docker_config_line,
+                "      # DOCKER_CONFIG intentionally removed",
+                "job-scoped DOCKER_CONFIG",
+            ),
+            (
+                "Docker config symlink guard removed",
+                docker_config_guard,
+                '          test ! -e "$DOCKER_CONFIG"',
+                "hash-before-execution",
+            ),
+            (
+                "download symlink guard removed",
+                download_guard,
+                '          test ! -e "$BUILDX_DOWNLOAD"',
+                "hash-before-execution",
+            ),
+            (
+                "post-install Docker resolution assertion removed",
+                version_assertion,
+                "          # docker plugin resolution intentionally unchecked",
+                "hash-before-execution",
+            ),
+            (
+                "job environment propagation removed",
+                config_propagation,
+                "          # DOCKER_CONFIG propagation intentionally removed",
+                "hash-before-execution",
+            ),
+            (
+                "setup action version downloader",
+                setup_flags_line,
+                f"{setup_flags_line}\n          version: v0.33.0",
+                "alternate Buildx binary",
+            ),
+            (
+                "setup action binary cache",
+                setup_flags_line,
+                f"{setup_flags_line}\n          cache-binary: true",
+                "alternate Buildx binary",
+            ),
+            (
+                "later Docker config override",
+                setup_flags_line,
+                (
+                    f"{setup_flags_line}\n"
+                    "      - name: Override Docker config\n"
+                    "        run: echo 'DOCKER_CONFIG=/tmp/alternate' >> \"$GITHUB_ENV\""
+                ),
+                "override DOCKER_CONFIG",
+            ),
+        )
+        for target in ("security", "release"):
+            for name, old, new, error in mutations:
+                with self.subTest(target=target, mutation=name):
+                    with self.assertRaisesRegex(WorkflowPolicyError, error):
+                        self._verify(self._mutate(target, old, new))
+
+            source = self.sources[target]
+            starts = [match.start() for match in re.finditer(r"(?m)^      - ", source)]
+            steps = [
+                source[
+                    start : (
+                        starts[index + 1] if index + 1 < len(starts) else len(source)
+                    )
+                ]
+                for index, start in enumerate(starts)
+            ]
+            install_step = next(
+                step
+                for step in steps
+                if "name: Install the exact verified Buildx client" in step
+            )
+            setup_step = next(
+                step for step in steps if "uses: docker/setup-buildx-action@" in step
+            )
+            sources = copy.deepcopy(self.sources)
+            sources[target] = source.replace(install_step, "", 1).replace(
+                setup_step,
+                setup_step + install_step,
+                1,
+            )
+            with self.subTest(target=target, mutation="installer after setup"):
+                with self.assertRaisesRegex(WorkflowPolicyError, "before the setup"):
+                    self._verify(sources)
 
     def test_organization_policy_cannot_be_rolled_back_as_a_quorum(self) -> None:
         sources = copy.deepcopy(self.sources)
