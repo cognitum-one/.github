@@ -52,6 +52,16 @@ It in turn:
   SHA-256 digests;
 - fetches the mandatory organization Gitleaks policy from an exact commit,
   verifies its SHA-256 digest, and ignores candidate-controlled replacements;
+- fetches the mandatory OSV policy and its negative tests from an exact commit,
+  verifies every SHA-256 digest, and executes the tests before evaluating the
+  candidate's scanner report;
+- runs OSV through the pinned organization wrapper with the pinned,
+  ignore-free organization config, `--no-ignore`, and `--all-vulns`; a
+  candidate `osv-scanner.toml`, `.gitignore`, lockfile `dev` flag, scanner
+  binary, config, or report path cannot suppress or replace evidence;
+- keeps scanner binaries, policies, and machine reports outside the untrusted
+  checkout and rejects symlinks, unexpected process statuses, empty or
+  malformed reports, and command-grammar drift;
 - treats a missing, invalid, or failed machine-readable OSV result as a failed
   security gate.
 
@@ -59,7 +69,36 @@ Version inputs are intentionally unsupported: changing a scanner requires a
 reviewed workflow commit that updates both its version and digest. The
 full-history job is informational with respect to findings, but tool download,
 integrity, and parse failures still fail that job rather than manufacturing a
-clean result.
+clean result. Every fixable High/Critical OSV finding blocks, including a
+finding whose candidate-controlled lock metadata labels it development-only.
+Fix or remove such dependencies rather than weakening the shared scanner.
+
+## Reviewed OSV database correction
+
+The only scanner-database correction is the React Router advisory
+`GHSA-qwww-vcr4-c8h2` at version `7.18.2`. The upstream maintainer advisory
+identifies `7.18.2` as patched, while the current OSV range still reports it as
+affected. The correction is intentionally narrower than a general allowlist:
+
+- only `cognitum-one/website` at `package-lock.json` and
+  `cognitum-one/management` at `management-ui/package-lock.json` are eligible;
+- the lock root must declare `react-router-dom` exactly as `7.18.2`, and both
+  resolved `react-router` and `react-router-dom` nodes must be exactly `7.18.2`;
+- neither lock may contain a second router copy or any React Server Components
+  package; the exact application manifest, scripts, shipped source tree, and
+  Vite configuration must contain no RSC dependency, condition, entry point,
+  or unstable API surface;
+- only that advisory/package/version tuple is corrected;
+- the correction expires at the start of `2026-08-15` UTC.
+
+Wrong repositories, paths, versions, dependency ranges, nested copies,
+advisory IDs, RSC surfaces, symlinks, oversized/unreadable source, duplicate
+JSON keys, malformed severity/report data, or an expired correction remain
+blocking. The organization security/release maintainers own the exception.
+Before expiry they must recheck the upstream maintainer advisory and OSV data,
+then either remove the correction or land a newly reviewed policy commit,
+expiry, hashes, and adversarial tests. Expiry itself blocks; it never silently
+extends.
 
 ## metaharness / qe-harness integration (planned)
 
