@@ -400,31 +400,10 @@ def evaluate(
             version = package_identity.get("version")
             if not isinstance(name, str) or not isinstance(version, str):
                 raise ValueError("OSV package name/version is invalid")
-            severity: dict[str, list[float]] = {}
-            groups = package_record.get("groups")
-            if not isinstance(groups, list):
-                raise ValueError("OSV package groups is not an array")
-            for group in groups:
-                if not isinstance(group, dict):
-                    raise ValueError("OSV severity group is not an object")
-                advisory_ids = group.get("ids")
-                if not isinstance(advisory_ids, list):
-                    raise ValueError("OSV severity group ids is not an array")
-                for advisory in advisory_ids:
-                    if not isinstance(advisory, str):
-                        raise ValueError("OSV severity advisory id is invalid")
-                    try:
-                        score = float(group.get("max_severity"))
-                    except (TypeError, ValueError):
-                        raise ValueError(
-                            f"OSV severity is missing or invalid for {advisory}"
-                        )
-                    if not math.isfinite(score) or not 0.0 <= score <= 10.0:
-                        raise ValueError(f"OSV severity is out of range for {advisory}")
-                    severity.setdefault(advisory, []).append(score)
             vulnerabilities = package_record.get("vulnerabilities")
             if not isinstance(vulnerabilities, list):
                 raise ValueError("OSV vulnerabilities is not an array")
+            findings: list[tuple[str, bool]] = []
             for vulnerability in vulnerabilities:
                 if not isinstance(vulnerability, dict):
                     raise ValueError("OSV vulnerability is not an object")
@@ -457,11 +436,48 @@ def evaluate(
                                 ):
                                     raise ValueError("OSV fixed version is invalid")
                                 fixed = True
+                findings.append((advisory, fixed))
+
+            severity: dict[str, list[float]] = {}
+            severity_missing: set[str] = set()
+            groups = package_record.get("groups")
+            if not isinstance(groups, list):
+                raise ValueError("OSV package groups is not an array")
+            for group in groups:
+                if not isinstance(group, dict):
+                    raise ValueError("OSV severity group is not an object")
+                advisory_ids = group.get("ids")
+                if not isinstance(advisory_ids, list):
+                    raise ValueError("OSV severity group ids is not an array")
+                for advisory in advisory_ids:
+                    if not isinstance(advisory, str):
+                        raise ValueError("OSV severity advisory id is invalid")
+                    raw_score = group.get("max_severity")
+                    if raw_score is None or raw_score == "":
+                        severity_missing.add(advisory)
+                        continue
+                    if isinstance(raw_score, bool):
+                        raise ValueError(
+                            f"OSV severity is missing or invalid for {advisory}"
+                        )
+                    try:
+                        score = float(raw_score)
+                    except (TypeError, ValueError):
+                        raise ValueError(
+                            f"OSV severity is missing or invalid for {advisory}"
+                        )
+                    if not math.isfinite(score) or not 0.0 <= score <= 10.0:
+                        raise ValueError(f"OSV severity is out of range for {advisory}")
+                    severity.setdefault(advisory, []).append(score)
+
+            for advisory, fixed in findings:
+                if not fixed:
+                    continue
                 advisory_scores = severity.get(advisory)
-                if not advisory_scores:
+                if advisory in severity_missing or not advisory_scores:
                     raise ValueError(f"OSV severity is missing for {advisory}")
                 score = max(advisory_scores)
-                if not (fixed and score >= 7.0):
+                if score < 7.0:
                     continue
                 row = (name, version, advisory, score, source)
                 if reviewed_router_patch_exception(

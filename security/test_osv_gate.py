@@ -381,11 +381,88 @@ class OsvGateTest(unittest.TestCase):
         self.assertEqual(len(blocking), 1)
         self.assertEqual(reviewed, [])
 
-    def test_missing_severity_fails_closed(self) -> None:
-        payload = report(str(self.management_lock))
-        payload["results"][0]["packages"][0]["groups"] = []
-        with self.assertRaisesRegex(ValueError, "severity is missing"):
-            self.evaluate(payload)
+    def test_no_fix_missing_severity_is_informational(self) -> None:
+        advisory = "RUSTSEC-2025-0119"
+        severityless_groups = (
+            [],
+            [{"ids": [advisory]}],
+            [{"ids": [advisory], "max_severity": ""}],
+            [{"ids": [advisory], "max_severity": None}],
+        )
+        for groups in severityless_groups:
+            payload = report(
+                str(self.management_lock),
+                package="number_prefix",
+                version="0.4.0",
+                advisory=advisory,
+            )
+            package_record = payload["results"][0]["packages"][0]
+            package_record["groups"] = groups
+            package_record["vulnerabilities"][0]["affected"] = [
+                {"ranges": [{"events": [{"introduced": "0.0.0-0"}]}]}
+            ]
+            with self.subTest(groups=groups):
+                blocking, reviewed = self.evaluate(payload)
+                self.assertEqual(blocking, [])
+                self.assertEqual(reviewed, [])
+
+    def test_fixable_missing_severity_fails_closed(self) -> None:
+        advisory = "RUSTSEC-2026-0190"
+        severityless_groups = (
+            [],
+            [{"ids": [advisory]}],
+            [{"ids": [advisory], "max_severity": ""}],
+            [{"ids": [advisory], "max_severity": None}],
+        )
+        for groups in severityless_groups:
+            payload = report(
+                str(self.management_lock),
+                package="anyhow",
+                version="1.0.100",
+                advisory=advisory,
+            )
+            payload["results"][0]["packages"][0]["groups"] = groups
+            with (
+                self.subTest(groups=groups),
+                self.assertRaisesRegex(ValueError, "severity is missing"),
+            ):
+                self.evaluate(payload)
+
+    def test_malformed_severity_fails_closed_even_without_a_fix(self) -> None:
+        for fixed, raw_score in (
+            (True, "not-a-score"),
+            (False, "not-a-score"),
+            (True, {}),
+            (False, []),
+            (True, True),
+            (False, False),
+        ):
+            payload = report(str(self.management_lock))
+            package_record = payload["results"][0]["packages"][0]
+            package_record["groups"][0]["max_severity"] = raw_score
+            if not fixed:
+                package_record["vulnerabilities"][0]["affected"] = [
+                    {"ranges": [{"events": [{"introduced": "0"}]}]}
+                ]
+            with (
+                self.subTest(fixed=fixed, raw_score=raw_score),
+                self.assertRaisesRegex(ValueError, "severity is missing or invalid"),
+            ):
+                self.evaluate(payload)
+
+    def test_fixable_high_blocks_and_medium_is_informational(self) -> None:
+        for score, expected_blocking in (("6.9", 0), ("7.0", 1), ("10.0", 1)):
+            payload = report(
+                str(self.management_lock),
+                package="example",
+                version="1.0.0",
+                advisory="GHSA-2222-3333-4444",
+            )
+            payload["results"][0]["packages"][0]["groups"][0]["max_severity"] = score
+            with self.subTest(score=score):
+                blocking, reviewed = self.evaluate(payload)
+                self.assertEqual(len(blocking), expected_blocking)
+                self.assertEqual(reviewed, [])
 
     def test_nonfinite_or_out_of_range_severity_fails_closed(self) -> None:
         for score in ("NaN", "Infinity", "-1", "10.1"):
@@ -397,6 +474,7 @@ class OsvGateTest(unittest.TestCase):
 
     def test_malformed_affected_shape_fails_closed(self) -> None:
         payload = report(str(self.management_lock))
+        payload["results"][0]["packages"][0]["groups"] = []
         payload["results"][0]["packages"][0]["vulnerabilities"][0][
             "affected"
         ] = "malformed-not-an-array"
