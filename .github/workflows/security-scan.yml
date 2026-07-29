@@ -7,9 +7,9 @@ name: security-scan
 #   secrets               — CURRENT files only (--no-git), BLOCKING on every
 #                           push/PR. Respects inline `gitleaks:allow` and the
 #                           org allowlist; no historical-fixture noise.
-#   secrets-history-audit — FULL history, INFORMATIONAL, on the weekly schedule
-#                           (and manual dispatch) only. Surfaces removed/rotated
-#                           secrets as warnings; never blocks.
+#   secrets-history-audit — FULL history FINDINGS are informational, on the
+#                           weekly schedule (and manual dispatch) only.
+#                           Integrity, execution, and parse failures still block.
 # OSV policy: fails only on High/Critical vulnerabilities that have a fix, AND only
 #   when the affected package can actually ship. A finding reachable ONLY through
 #   devDependencies (test runners, coverage tooling, linters) never reaches a
@@ -21,65 +21,82 @@ name: security-scan
 
 on:
   workflow_call:
-    inputs:
-      gitleaks-version:
-        type: string
-        default: "8.30.1"
-      osv-version:
-        type: string
-        default: "2.2.4"
 
 permissions:
   contents: read
+
+env:
+  GITLEAKS_VERSION: "8.30.1"
+  GITLEAKS_LINUX_X64_SHA256: "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
+  GITLEAKS_CONFIG_COMMIT: "9375207473d6cd67c45ce5a0ed52ba7012dba366"
+  GITLEAKS_CONFIG_SHA256: "5018f890f807791f06b3f3e49c543dde8bb96dae7f984d74437ec57cc8f75e8e"
+  OSV_VERSION: "2.2.4"
+  OSV_LINUX_AMD64_SHA256: "7702cd1e5d9f5059dd9570f4ad967f27d3c5f5391b371ec937b384c238177f55"
 
 jobs:
   secrets:
     name: secret scan (current files)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - name: Run gitleaks (current files, blocking)
         run: |
+          set -euo pipefail
           # Only fetch the org config when no repo-local override exists — it
-          # won't be used otherwise, and leaving it sitting in the working
-          # tree makes it part of the --source . scan target: gitleaks then
-          # flags the file's OWN key-shaped placeholder strings (the exact
-          # patterns it lists to allow) as a false positive against itself.
+          # is pinned by commit and hash and stored outside the scan target.
+          CFG=()
           if [ ! -f .gitleaks.toml ]; then
-            curl -fsSL https://raw.githubusercontent.com/cognitum-one/.github/main/gitleaks.toml -o .gitleaks.org.toml || true
+            ORG_CONFIG="$RUNNER_TEMP/gitleaks.org.toml"
+            curl --proto '=https' --tlsv1.2 -fsSLo "$ORG_CONFIG" \
+              "https://raw.githubusercontent.com/cognitum-one/.github/${GITLEAKS_CONFIG_COMMIT}/gitleaks.toml"
+            echo "${GITLEAKS_CONFIG_SHA256}  ${ORG_CONFIG}" | sha256sum -c -
+            CFG=(--config "$ORG_CONFIG")
+          else
+            CFG=(--config .gitleaks.toml)
           fi
-          V="${{ inputs.gitleaks-version }}"
-          curl -fsSL "https://github.com/gitleaks/gitleaks/releases/download/v${V}/gitleaks_${V}_linux_x64.tar.gz" | tar -xzf - gitleaks
-          CFG=""
-          [ -f .gitleaks.toml ] && CFG="--config .gitleaks.toml"
-          [ -z "$CFG" ] && [ -f .gitleaks.org.toml ] && CFG="--config .gitleaks.org.toml"
+          ARCHIVE="$RUNNER_TEMP/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl --proto '=https' --tlsv1.2 -fsSLo "$ARCHIVE" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          echo "${GITLEAKS_LINUX_X64_SHA256}  ${ARCHIVE}" | sha256sum -c -
+          tar -xzf "$ARCHIVE" gitleaks
+          ./gitleaks version | grep -F "$GITLEAKS_VERSION"
           # --no-git: scan the working tree (current files) only. Blocks new
           # secrets; ignores older commits (those are the history audit's job).
-          ./gitleaks detect --source . --no-git $CFG --redact --exit-code 1
+          ./gitleaks detect --source . --no-git "${CFG[@]}" --redact --exit-code 1
 
   secrets-history-audit:
     name: secret scan (full history audit)
-    # Informational: weekly schedule + manual runs only. Never blocks push/PR.
+    # Findings are informational; scanner integrity/execution failures block.
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           fetch-depth: 0
       - name: Run gitleaks (full history, informational)
         run: |
-          # See the "current files" job above for why this is conditional.
+          set -euo pipefail
+          CFG=()
           if [ ! -f .gitleaks.toml ]; then
-            curl -fsSL https://raw.githubusercontent.com/cognitum-one/.github/main/gitleaks.toml -o .gitleaks.org.toml || true
+            ORG_CONFIG="$RUNNER_TEMP/gitleaks.org.toml"
+            curl --proto '=https' --tlsv1.2 -fsSLo "$ORG_CONFIG" \
+              "https://raw.githubusercontent.com/cognitum-one/.github/${GITLEAKS_CONFIG_COMMIT}/gitleaks.toml"
+            echo "${GITLEAKS_CONFIG_SHA256}  ${ORG_CONFIG}" | sha256sum -c -
+            CFG=(--config "$ORG_CONFIG")
+          else
+            CFG=(--config .gitleaks.toml)
           fi
-          V="${{ inputs.gitleaks-version }}"
-          curl -fsSL "https://github.com/gitleaks/gitleaks/releases/download/v${V}/gitleaks_${V}_linux_x64.tar.gz" | tar -xzf - gitleaks
-          CFG=""
-          [ -f .gitleaks.toml ] && CFG="--config .gitleaks.toml"
-          [ -z "$CFG" ] && [ -f .gitleaks.org.toml ] && CFG="--config .gitleaks.org.toml"
-          # Never fail the workflow — this is an audit, not a gate.
-          ./gitleaks detect --source . $CFG --redact --report-format json --report-path history.json --exit-code 0 || true
-          n=$(python3 -c "import json;print(len(json.load(open('history.json'))))" 2>/dev/null || echo 0)
+          ARCHIVE="$RUNNER_TEMP/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl --proto '=https' --tlsv1.2 -fsSLo "$ARCHIVE" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          echo "${GITLEAKS_LINUX_X64_SHA256}  ${ARCHIVE}" | sha256sum -c -
+          tar -xzf "$ARCHIVE" gitleaks
+          ./gitleaks version | grep -F "$GITLEAKS_VERSION"
+          # Findings do not fail this job because exit-code is zero. Scanner
+          # integrity, execution, and report-parse failures remain blocking.
+          ./gitleaks detect --source . "${CFG[@]}" --redact \
+            --report-format json --report-path history.json --exit-code 0
+          n="$(python3 -c "import json; print(len(json.load(open('history.json'))))")"
           if [ "$n" -gt 0 ]; then
             echo "::warning::Full-history audit found $n secret finding(s) in git history — review (not blocking; may be removed/rotated secrets)."
             {
@@ -96,7 +113,7 @@ jobs:
     name: dependency scan (OSV, fail on High+ fixable)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - name: Write the OSV gate script
         run: |
           cat > .osv-gate.py <<'GATE_EOF'
@@ -130,8 +147,12 @@ jobs:
 
           try:
               data = json.load(open("osv.json"))
-          except Exception:
-              sys.exit(0)
+          except Exception as error:
+              print("::error::OSV JSON is missing or invalid: %s" % error)
+              sys.exit(2)
+          if not isinstance(data, dict) or not isinstance(data.get("results"), list):
+              print("::error::OSV JSON does not contain a results array")
+              sys.exit(2)
 
           blocking, dev_only = [], []
           for res in data.get("results", []):
@@ -193,14 +214,28 @@ jobs:
           GATE_EOF
       - name: Run OSV-Scanner
         run: |
-          V="${{ inputs.osv-version }}"
-          curl -fsSL "https://github.com/google/osv-scanner/releases/download/v${V}/osv-scanner_linux_amd64" -o osv-scanner
+          set -euo pipefail
+          curl --proto '=https' --tlsv1.2 -fsSLo osv-scanner \
+            "https://github.com/google/osv-scanner/releases/download/v${OSV_VERSION}/osv-scanner_linux_amd64"
+          echo "${OSV_LINUX_AMD64_SHA256}  osv-scanner" | sha256sum -c -
           chmod +x osv-scanner
+          ./osv-scanner --version | grep -F "$OSV_VERSION"
           # Human-readable table in the log (never fails the step here)
           ./osv-scanner --recursive . || true
-          # Machine-readable for the gate
-          ./osv-scanner --recursive --format json . > osv.json 2>/dev/null || true
-          if [ ! -s osv.json ]; then echo "no OSV results (no manifests?)"; exit 0; fi
+          # Machine-readable for the gate. Exit 1 means findings; any other
+          # non-zero status is a scanner failure and must fail closed.
+          set +e
+          ./osv-scanner --recursive --format json . > osv.json
+          OSV_STATUS=$?
+          set -e
+          if [ "$OSV_STATUS" -ne 0 ] && [ "$OSV_STATUS" -ne 1 ]; then
+            echo "::error::OSV-Scanner failed with exit status $OSV_STATUS."
+            exit "$OSV_STATUS"
+          fi
+          test -s osv.json || {
+            echo "::error::OSV-Scanner produced no machine-readable result."
+            exit 1
+          }
           # Gate: fail on High/Critical (CVSS>=7) fixable vulns that can SHIP.
           # Dev-only npm findings are reported but do not block (see header).
           python3 .osv-gate.py
