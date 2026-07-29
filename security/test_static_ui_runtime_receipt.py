@@ -13,6 +13,7 @@ import sys
 import tarfile
 import tempfile
 import unittest
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import static_ui_runtime_receipt as receipt
@@ -258,6 +259,12 @@ class ProfileAndContextTest(unittest.TestCase):
         )
         receipt.profile_for("cognitum-one/website", loaded)
         receipt.profile_for("cognitum-one/management", loaded)
+        self.assertEqual(
+            loaded["profiles"]["cognitum-one/website"]["packagingFiles"][
+                ".dockerignore"
+            ],
+            "505964d0155b3172761c831cfb957c2da8d3edc2b44e313b5058dc18b7ed44f1",
+        )
 
     def test_approved_profile_cannot_have_missing_digest(self) -> None:
         value = policy()
@@ -459,14 +466,34 @@ class ProfileAndContextTest(unittest.TestCase):
 class BuildSecretTest(unittest.TestCase):
     def secret_profile(self) -> dict:
         value = profile()
+        fixture_variables = {
+            "VITE_FIREBASE_API_KEY": "premerge-fixture-api-key",
+            "VITE_FIREBASE_PROJECT_ID": "premerge-fixture-project-id",
+        }
+        fixture_content = "".join(
+            f"{key}={fixture_variables[key]}\n" for key in sorted(fixture_variables)
+        ).encode()
+        value["packagingFiles"]["config/frontend-build-secret-versions.json"] = "1" * 64
         value["buildSecret"] = {
             "id": "management_vite_env",
             "target": "/app/.env.production",
             "versionContractPath": "config/frontend-build-secret-versions.json",
             "project": "project-1",
+            "premergeFixture": {
+                "kind": "premerge-fixture",
+                "mode": "premerge",
+                "source": "organization-profile",
+                "classification": "public-nonrelease",
+                "variables": fixture_variables,
+                "contentDigest": f"sha256:{sha(fixture_content)}",
+            },
             "variables": {
                 "VITE_FIREBASE_API_KEY": "FIREBASE_WEB_API_KEY",
                 "VITE_FIREBASE_PROJECT_ID": "FIREBASE_PROJECT_ID",
+            },
+            "versions": {
+                "VITE_FIREBASE_API_KEY": 11,
+                "VITE_FIREBASE_PROJECT_ID": 12,
             },
         }
         return value
@@ -506,6 +533,9 @@ class BuildSecretTest(unittest.TestCase):
             self.assertEqual([call[1] for call in calls], [11, 12])
             self.assertNotIn("value-11", json.dumps(metadata))
             self.assertRegex(metadata["contentDigest"], r"^sha256:[0-9a-f]{64}$")
+            self.assertEqual(metadata["kind"], "secret-manager")
+            self.assertEqual(metadata["mode"], "release")
+            self.assertEqual(metadata["source"], "gcloud-numeric-version")
 
     def test_latest_and_boolean_versions_are_rejected(self) -> None:
         for invalid in ("latest", True, 0, -1):
@@ -513,6 +543,12 @@ class BuildSecretTest(unittest.TestCase):
             contract["variables"]["VITE_FIREBASE_API_KEY"]["version"] = invalid
             with self.assertRaisesRegex(receipt.PolicyError, "positive numeric"):
                 receipt._validated_version_contract(contract, self.secret_profile())
+
+    def test_positive_numeric_version_drift_is_rejected(self) -> None:
+        contract = self.contract()
+        contract["variables"]["VITE_FIREBASE_API_KEY"]["version"] = 13
+        with self.assertRaisesRegex(receipt.PolicyError, "numeric version drift"):
+            receipt._validated_version_contract(contract, self.secret_profile())
 
     def test_control_character_secret_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -523,6 +559,327 @@ class BuildSecretTest(unittest.TestCase):
                     output_path=Path(directory) / "build.env",
                     access_secret=lambda *_: b"bad\nvalue",
                 )
+
+    def test_premerge_fixture_is_exact_public_nonrelease_profile_material(self) -> None:
+        profile_value = self.secret_profile()
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "build.env"
+            metadata = receipt.materialize_premerge_fixture(
+                profile=profile_value,
+                contract=self.contract(),
+                output_path=output,
+            )
+            self.assertEqual(output.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(
+                output.read_text(encoding="utf-8"),
+                (
+                    "VITE_FIREBASE_API_KEY=premerge-fixture-api-key\n"
+                    "VITE_FIREBASE_PROJECT_ID=premerge-fixture-project-id\n"
+                ),
+            )
+            self.assertEqual(metadata["kind"], "premerge-fixture")
+            self.assertEqual(metadata["mode"], "premerge")
+            self.assertEqual(metadata["source"], "organization-profile")
+            self.assertEqual(metadata["classification"], "public-nonrelease")
+            serialized = json.dumps(metadata, sort_keys=True)
+            self.assertNotIn("FIREBASE_WEB_API_KEY", serialized)
+            self.assertNotIn("project-1", serialized)
+            self.assertNotIn("premerge-fixture-api-key", serialized)
+
+    def test_premerge_never_calls_gcloud_but_release_calls_every_exact_version(
+        self,
+    ) -> None:
+        profile_value = self.secret_profile()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with mock.patch.object(
+                receipt,
+                "_gcloud_secret_accessor",
+                side_effect=AssertionError("premerge must not access Secret Manager"),
+            ):
+                evidence = receipt._materialize_profile_build_environment(
+                    profile=profile_value,
+                    contract=self.contract(),
+                    output_path=root / "premerge.env",
+                    mode="premerge",
+                )
+            self.assertEqual(evidence["kind"], "premerge-fixture")
+
+            calls = []
+
+            def access(secret: str, version: int, project: str) -> bytes:
+                calls.append((secret, version, project))
+                return f"public-value-{version}".encode()
+
+            with mock.patch.object(
+                receipt, "_gcloud_secret_accessor", side_effect=access
+            ):
+                evidence = receipt._materialize_profile_build_environment(
+                    profile=profile_value,
+                    contract=self.contract(),
+                    output_path=root / "release.env",
+                    mode="release",
+                )
+            self.assertEqual(evidence["kind"], "secret-manager")
+            self.assertEqual(
+                calls,
+                [
+                    ("FIREBASE_WEB_API_KEY", 11, "project-1"),
+                    ("FIREBASE_PROJECT_ID", 12, "project-1"),
+                ],
+            )
+
+    def test_missing_release_secret_fails_without_writing_environment(self) -> None:
+        profile_value = self.secret_profile()
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "release.env"
+
+            def access(secret: str, *_: object) -> bytes:
+                if secret == "FIREBASE_PROJECT_ID":
+                    raise receipt.PolicyError("missing exact numeric secret")
+                return b"public-value"
+
+            with self.assertRaisesRegex(receipt.PolicyError, "missing exact numeric"):
+                receipt.materialize_management_environment(
+                    profile=profile_value,
+                    contract=self.contract(),
+                    output_path=output,
+                    access_secret=access,
+                )
+            self.assertFalse(output.exists())
+
+        loaded = receipt.load_policy(
+            Path(__file__).with_name("static-ui-runtime-profiles.json")
+        )
+        management = receipt.profile_for("cognitum-one/management", loaded)
+        build_secret = management["buildSecret"]
+        contract = {
+            "schemaVersion": 1,
+            "project": build_secret["project"],
+            "variables": {
+                environment_name: {
+                    "secret": secret_name,
+                    "version": build_secret["versions"][environment_name],
+                }
+                for environment_name, secret_name in build_secret["variables"].items()
+            },
+        }
+        missing_secrets = (
+            "FIREBASE_APP_CHECK_MANAGEMENT_SITE_KEY",
+            "FIREBASE_MESSAGING_SENDER_ID",
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for index, missing in enumerate(missing_secrets):
+                with self.subTest(missing=missing):
+                    output = root / f"release-{index}.env"
+
+                    def access_exact(secret: str, *_: object) -> bytes:
+                        if secret == missing:
+                            raise receipt.PolicyError(
+                                "missing exact numeric secret version"
+                            )
+                        return b"public-release-test-value"
+
+                    with self.assertRaisesRegex(
+                        receipt.PolicyError, "missing exact numeric"
+                    ):
+                        receipt.materialize_management_environment(
+                            profile=management,
+                            contract=contract,
+                            output_path=output,
+                            access_secret=access_exact,
+                        )
+                    self.assertFalse(output.exists())
+
+    def test_cross_mode_materialization_claims_are_rejected(self) -> None:
+        profile_value = self.secret_profile()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            fixture = receipt.materialize_premerge_fixture(
+                profile=profile_value,
+                contract=self.contract(),
+                output_path=root / "premerge.env",
+            )
+            release = receipt.materialize_management_environment(
+                profile=profile_value,
+                contract=self.contract(),
+                output_path=root / "release.env",
+                access_secret=lambda *_: b"public-value",
+            )
+        with self.assertRaisesRegex(receipt.PolicyError, "secret-manager"):
+            receipt._validate_build_materialization_evidence(
+                profile=profile_value,
+                mode="release",
+                evidence=fixture,
+            )
+        with self.assertRaisesRegex(receipt.PolicyError, "premerge fixture"):
+            receipt._validate_build_materialization_evidence(
+                profile=profile_value,
+                mode="premerge",
+                evidence=release,
+            )
+
+    def test_receipt_verifier_binds_premerge_fixture_and_profile(self) -> None:
+        profile_value = self.secret_profile()
+        policy_value = policy(profile_value)
+        inventory = receipt.inventory_rootfs(io.BytesIO(good_tar()), profile_value)
+        context = context_manifest(profile_value)
+        metadata = {
+            "containerimage.config.digest": IMAGE_ID,
+            "containerimage.digest": f"sha256:{'9' * 64}",
+            "buildx.build.ref": "builder/ref",
+            "buildx.build.provenance": {"mode": "max"},
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            policy_path = root / "profiles.json"
+            write_policy(policy_path, policy_value)
+            fixture = receipt.materialize_premerge_fixture(
+                profile=profile_value,
+                contract=self.contract(),
+                output_path=root / "premerge.env",
+            )
+            value = receipt.build_receipt(
+                repository="example/static-ui",
+                policy=policy_value,
+                policy_path=policy_path,
+                context_manifest=context,
+                image_inspect=image_inspect(profile_value),
+                inventory=inventory,
+                build_metadata=metadata,
+                mode="premerge",
+                image_name="registry.example/static-ui",
+                registry_digest=None,
+                github_context=github_context(),
+                receipt_nonce=NONCE,
+                build_invocation=receipt._exact_build_invocation(
+                    profile_value, context
+                ),
+                build_secret_metadata=fixture,
+            )
+            receipt.verify_premerge_receipt(
+                receipt=value,
+                inventory=inventory,
+                repository="example/static-ui",
+                policy=policy_value,
+                policy_path=policy_path,
+                expected_source_sha=SOURCE_SHA,
+                expected_image_name="registry.example/static-ui",
+                expected_image_id=IMAGE_ID,
+                expected_run_id="303",
+                expected_run_attempt="1",
+                expected_job="runtime-proof",
+                expected_workflow_ref=github_context()["callerWorkflowRef"],
+                expected_workflow_sha=WORKFLOW_SHA,
+                expected_nonce=NONCE,
+            )
+
+            for mutation in (
+                "source",
+                "content-digest",
+                "value-digest",
+                "extra-metadata",
+            ):
+                with self.subTest(mutation=mutation):
+                    forged = copy.deepcopy(value)
+                    materialization = forged["build"]["buildSecret"]
+                    if mutation == "source":
+                        materialization["source"] = "secret-manager"
+                    elif mutation == "content-digest":
+                        materialization["contentDigest"] = f"sha256:{'0' * 64}"
+                    elif mutation == "value-digest":
+                        materialization["variables"][0][
+                            "valueDigest"
+                        ] = f"sha256:{'0' * 64}"
+                    else:
+                        materialization["attacker"] = True
+                    unsigned = dict(forged)
+                    unsigned.pop("receiptDigest")
+                    forged["receiptDigest"] = (
+                        f"sha256:{sha(receipt._canonical_bytes(unsigned))}"
+                    )
+                    with self.assertRaisesRegex(
+                        receipt.PolicyError, "premerge fixture"
+                    ):
+                        receipt.verify_premerge_receipt(
+                            receipt=forged,
+                            inventory=inventory,
+                            repository="example/static-ui",
+                            policy=policy_value,
+                            policy_path=policy_path,
+                            expected_source_sha=SOURCE_SHA,
+                            expected_image_name="registry.example/static-ui",
+                            expected_image_id=IMAGE_ID,
+                            expected_run_id="303",
+                            expected_run_attempt="1",
+                            expected_job="runtime-proof",
+                            expected_workflow_ref=github_context()["callerWorkflowRef"],
+                            expected_workflow_sha=WORKFLOW_SHA,
+                            expected_nonce=NONCE,
+                        )
+
+            changed_profile = copy.deepcopy(profile_value)
+            changed_fixture = changed_profile["buildSecret"]["premergeFixture"]
+            changed_fixture["variables"][
+                "VITE_FIREBASE_API_KEY"
+            ] = "premerge-fixture-other-api-key"
+            changed_content = "".join(
+                f"{key}={changed_fixture['variables'][key]}\n"
+                for key in sorted(changed_fixture["variables"])
+            ).encode()
+            changed_fixture["contentDigest"] = f"sha256:{sha(changed_content)}"
+            with self.assertRaises(receipt.PolicyError):
+                receipt.verify_premerge_receipt(
+                    receipt=value,
+                    inventory=inventory,
+                    repository="example/static-ui",
+                    policy=policy(changed_profile),
+                    policy_path=policy_path,
+                    expected_source_sha=SOURCE_SHA,
+                    expected_image_name="registry.example/static-ui",
+                    expected_image_id=IMAGE_ID,
+                    expected_run_id="303",
+                    expected_run_attempt="1",
+                    expected_job="runtime-proof",
+                    expected_workflow_ref=github_context()["callerWorkflowRef"],
+                    expected_workflow_sha=WORKFLOW_SHA,
+                    expected_nonce=NONCE,
+                )
+
+    def test_fixture_source_mode_extra_value_and_digest_drift_fail_closed(
+        self,
+    ) -> None:
+        mutations = [
+            ("source", "caller"),
+            ("mode", "release"),
+            ("contentDigest", f"sha256:{'0' * 64}"),
+        ]
+        for key, changed in mutations:
+            with self.subTest(key=key):
+                profile_value = self.secret_profile()
+                profile_value["buildSecret"]["premergeFixture"][key] = changed
+                with self.assertRaises(receipt.PolicyError):
+                    receipt._validate_profile("example/static-ui", profile_value)
+
+        profile_value = self.secret_profile()
+        profile_value["buildSecret"]["premergeFixture"]["attacker"] = True
+        with self.assertRaisesRegex(receipt.PolicyError, "keys differ"):
+            receipt._validate_profile("example/static-ui", profile_value)
+
+        profile_value = self.secret_profile()
+        profile_value["buildSecret"]["premergeFixture"]["variables"][
+            "VITE_FIREBASE_API_KEY"
+        ] = "premerge-fixture-altered"
+        with self.assertRaisesRegex(receipt.PolicyError, "content digest differs"):
+            receipt._validate_profile("example/static-ui", profile_value)
+
+        profile_value = self.secret_profile()
+        profile_value["buildSecret"]["premergeFixture"]["variables"][
+            "VITE_ATTACKER"
+        ] = "premerge-fixture-attacker"
+        with self.assertRaisesRegex(receipt.PolicyError, "variable set differs"):
+            receipt._validate_profile("example/static-ui", profile_value)
 
 
 class RuntimeInventoryTest(unittest.TestCase):

@@ -82,6 +82,12 @@ STATIC_MAX_BYTES = 4 * 1024 * 1024 * 1024
 MAX_POLICY_TEXT = 2 * 1024 * 1024
 MAX_POLICY_CAPTURE_BYTES = 16 * 1024 * 1024
 MAX_SECRET_VALUE = 16 * 1024
+MAX_BUILD_ENV_BYTES = 16 * 1024
+PREMERGE_FIXTURE_KIND = "premerge-fixture"
+PREMERGE_FIXTURE_SOURCE = "organization-profile"
+PREMERGE_FIXTURE_CLASSIFICATION = "public-nonrelease"
+RELEASE_SECRET_KIND = "secret-manager"
+RELEASE_SECRET_SOURCE = "gcloud-numeric-version"
 APPLICABILITY_EXCEPTION = {
     "advisory": "GHSA-qwww-vcr4-c8h2",
     "package": "react-router",
@@ -332,7 +338,15 @@ def _validate_profile(repository: str, profile: dict[str, Any]) -> None:
     if build_secret is not None:
         _require_exact_keys(
             build_secret,
-            {"id", "target", "versionContractPath", "project", "variables"},
+            {
+                "id",
+                "target",
+                "versionContractPath",
+                "project",
+                "premergeFixture",
+                "variables",
+                "versions",
+            },
             f"{repository} buildSecret",
         )
         if not re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", build_secret["id"]):
@@ -350,6 +364,22 @@ def _validate_profile(repository: str, profile: dict[str, Any]) -> None:
                 raise PolicyError(f"{repository} build environment name is invalid")
             if not re.fullmatch(r"[A-Z][A-Z0-9_]+", secret_name):
                 raise PolicyError(f"{repository} secret name is invalid")
+        versions = build_secret["versions"]
+        if not isinstance(versions, dict) or set(versions) != set(variables):
+            raise PolicyError(f"{repository} build secret numeric version set differs")
+        if any(
+            isinstance(version, bool) or not isinstance(version, int) or version <= 0
+            for version in versions.values()
+        ):
+            raise PolicyError(
+                f"{repository} build secret versions must be positive numeric"
+            )
+        contract_path = build_secret["versionContractPath"]
+        if contract_path not in packaging:
+            raise PolicyError(
+                f"{repository} build secret version contract is not digest-pinned"
+            )
+        _validated_premerge_fixture(profile, repository=repository)
 
     if not re.fullmatch(r"[^@\s]+@sha256:[0-9a-f]{64}", profile["baseImage"]):
         raise PolicyError(f"{repository} base image is not digest-pinned")
@@ -855,6 +885,120 @@ def prepare_context(
     return manifest
 
 
+def _validated_premerge_fixture(
+    profile: dict[str, Any], *, repository: str = "profile"
+) -> tuple[dict[str, Any], bytes]:
+    build_secret = profile.get("buildSecret")
+    if not isinstance(build_secret, dict):
+        raise PolicyError(f"{repository} profile has no build secret fixture")
+    fixture = build_secret.get("premergeFixture")
+    if not isinstance(fixture, dict):
+        raise PolicyError(f"{repository} premerge fixture must be an object")
+    _require_exact_keys(
+        fixture,
+        {
+            "kind",
+            "mode",
+            "source",
+            "classification",
+            "variables",
+            "contentDigest",
+        },
+        f"{repository} premerge fixture",
+    )
+    expected_labels = {
+        "kind": PREMERGE_FIXTURE_KIND,
+        "mode": "premerge",
+        "source": PREMERGE_FIXTURE_SOURCE,
+        "classification": PREMERGE_FIXTURE_CLASSIFICATION,
+    }
+    if {key: fixture.get(key) for key in expected_labels} != expected_labels:
+        raise PolicyError(f"{repository} premerge fixture labels differ")
+    variables = fixture["variables"]
+    if not isinstance(variables, dict) or set(variables) != set(
+        build_secret["variables"]
+    ):
+        raise PolicyError(f"{repository} premerge fixture variable set differs")
+    lines: list[bytes] = []
+    for environment_name in sorted(variables):
+        raw_value = variables[environment_name]
+        if not isinstance(raw_value, str):
+            raise PolicyError(
+                f"{repository} premerge fixture value is not text for "
+                f"{environment_name}"
+            )
+        value = _validate_secret_value(environment_name, raw_value.encode("utf-8"))
+        if not value.startswith("premerge-fixture-"):
+            raise PolicyError(
+                f"{repository} premerge fixture value is not visibly nonrelease "
+                f"for {environment_name}"
+            )
+        lines.append(f"{environment_name}={value}\n".encode("utf-8"))
+    content = b"".join(lines)
+    expected_digest = f"sha256:{_sha256_bytes(content)}"
+    if fixture["contentDigest"] != expected_digest:
+        raise PolicyError(f"{repository} premerge fixture content digest differs")
+    return fixture, content
+
+
+def _version_contract_digest(profile: dict[str, Any]) -> str:
+    build_secret = profile["buildSecret"]
+    if build_secret is None:
+        raise PolicyError("profile has no build secret version contract")
+    digest = profile["packagingFiles"].get(build_secret["versionContractPath"])
+    if not isinstance(digest, str) or not SHA256_RE.fullmatch(digest):
+        raise PolicyError("build secret version contract digest is absent")
+    return f"sha256:{digest}"
+
+
+def _premerge_fixture_evidence(profile: dict[str, Any]) -> dict[str, Any]:
+    fixture, _ = _validated_premerge_fixture(profile)
+    return {
+        "schemaVersion": SCHEMA_VERSION,
+        "kind": PREMERGE_FIXTURE_KIND,
+        "mode": "premerge",
+        "source": PREMERGE_FIXTURE_SOURCE,
+        "classification": PREMERGE_FIXTURE_CLASSIFICATION,
+        "id": profile["buildSecret"]["id"],
+        "target": profile["buildSecret"]["target"],
+        "versionContractDigest": _version_contract_digest(profile),
+        "fixtureProfileDigest": (f"sha256:{_sha256_bytes(_canonical_bytes(fixture))}"),
+        "variables": [
+            {
+                "environmentName": environment_name,
+                "valueDigest": (
+                    "sha256:"
+                    + _sha256_bytes(fixture["variables"][environment_name].encode())
+                ),
+            }
+            for environment_name in sorted(fixture["variables"])
+        ],
+        "contentDigest": fixture["contentDigest"],
+    }
+
+
+def _write_private_environment(output_path: Path, content: bytes) -> None:
+    if not content or len(content) > MAX_BUILD_ENV_BYTES or not content.endswith(b"\n"):
+        raise PolicyError("generated environment content is empty or oversized")
+    if output_path.exists() or output_path.is_symlink():
+        raise PolicyError("generated environment destination must not exist")
+    output_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    descriptor = os.open(
+        output_path,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+        0o600,
+    )
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(content)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            output_path.unlink()
+        raise
+    if stat.S_IMODE(output_path.stat().st_mode) != 0o600:
+        raise PolicyError("generated environment file mode is not 0600")
+
+
 def _validated_version_contract(
     contract: dict[str, Any], profile: dict[str, Any]
 ) -> list[dict[str, Any]]:
@@ -886,6 +1030,8 @@ def _validated_version_contract(
         version = value["version"]
         if isinstance(version, bool) or not isinstance(version, int) or version <= 0:
             raise PolicyError(f"secret version for {env_name} is not positive numeric")
+        if version != build_secret["versions"][env_name]:
+            raise PolicyError(f"secret numeric version drift for {env_name}")
         records.append(
             {
                 "environmentName": env_name,
@@ -918,10 +1064,7 @@ def materialize_management_environment(
     access_secret: Callable[[str, int, str], bytes],
 ) -> dict[str, Any]:
     records = _validated_version_contract(contract, profile)
-    if output_path.exists() or output_path.is_symlink():
-        raise PolicyError("generated environment destination must not exist")
-    output_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    lines = []
+    lines: list[bytes] = []
     evidence = []
     for record in records:
         raw = access_secret(
@@ -930,36 +1073,122 @@ def materialize_management_environment(
             profile["buildSecret"]["project"],
         )
         text = _validate_secret_value(record["environmentName"], raw)
-        lines.append(f"{record['environmentName']}={text}\n")
+        lines.append(f"{record['environmentName']}={text}\n".encode("utf-8"))
         evidence.append(
             {
                 **record,
                 "valueDigest": f"sha256:{_sha256_bytes(raw)}",
             }
         )
-    descriptor = os.open(
-        output_path,
-        os.O_WRONLY | os.O_CREAT | os.O_EXCL,
-        0o600,
-    )
-    try:
-        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as stream:
-            stream.writelines(lines)
-    except BaseException:
-        with contextlib.suppress(OSError):
-            output_path.unlink()
-        raise
-    if stat.S_IMODE(output_path.stat().st_mode) != 0o600:
-        raise PolicyError("generated environment file mode is not 0600")
+    _write_private_environment(output_path, b"".join(lines))
     return {
         "schemaVersion": SCHEMA_VERSION,
-        "kind": "cognitum.static-ui.build-secret.v1",
+        "kind": RELEASE_SECRET_KIND,
+        "mode": "release",
+        "source": RELEASE_SECRET_SOURCE,
         "id": profile["buildSecret"]["id"],
         "target": profile["buildSecret"]["target"],
         "project": profile["buildSecret"]["project"],
+        "versionContractDigest": _version_contract_digest(profile),
         "variables": evidence,
         "contentDigest": f"sha256:{_sha256_file(output_path)}",
     }
+
+
+def materialize_premerge_fixture(
+    *,
+    profile: dict[str, Any],
+    contract: dict[str, Any],
+    output_path: Path,
+) -> dict[str, Any]:
+    _validated_version_contract(contract, profile)
+    _, content = _validated_premerge_fixture(profile)
+    _write_private_environment(output_path, content)
+    evidence = _premerge_fixture_evidence(profile)
+    if evidence["contentDigest"] != f"sha256:{_sha256_file(output_path)}":
+        raise PolicyError("materialized premerge fixture digest differs")
+    return evidence
+
+
+def _validate_build_materialization_evidence(
+    *,
+    profile: dict[str, Any],
+    mode: str,
+    evidence: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    build_secret = profile["buildSecret"]
+    if build_secret is None:
+        if evidence is not None:
+            raise PolicyError("unexpected build environment materialization evidence")
+        return None
+    if not isinstance(evidence, dict):
+        raise PolicyError(
+            "required build environment materialization evidence is absent"
+        )
+    if mode == "premerge":
+        expected = _premerge_fixture_evidence(profile)
+        if evidence != expected:
+            raise PolicyError("premerge fixture evidence differs from the profile")
+        return expected
+    if mode != "release":
+        raise PolicyError("build environment materialization mode is invalid")
+    expected_keys = {
+        "schemaVersion",
+        "kind",
+        "mode",
+        "source",
+        "id",
+        "target",
+        "project",
+        "versionContractDigest",
+        "variables",
+        "contentDigest",
+    }
+    _require_exact_keys(evidence, expected_keys, "release secret-manager evidence")
+    expected_header = {
+        "schemaVersion": SCHEMA_VERSION,
+        "kind": RELEASE_SECRET_KIND,
+        "mode": "release",
+        "source": RELEASE_SECRET_SOURCE,
+        "id": build_secret["id"],
+        "target": build_secret["target"],
+        "project": build_secret["project"],
+        "versionContractDigest": _version_contract_digest(profile),
+    }
+    if {key: evidence.get(key) for key in expected_header} != expected_header:
+        raise PolicyError("release secret-manager evidence labels differ")
+    if not isinstance(evidence["contentDigest"], str) or not IMAGE_DIGEST_RE.fullmatch(
+        evidence["contentDigest"]
+    ):
+        raise PolicyError("release secret-manager content digest is invalid")
+    variables = evidence["variables"]
+    if not isinstance(variables, list) or len(variables) != len(
+        build_secret["variables"]
+    ):
+        raise PolicyError("release secret-manager variable evidence differs")
+    expected_records = [
+        {
+            "environmentName": environment_name,
+            "secret": build_secret["variables"][environment_name],
+            "version": build_secret["versions"][environment_name],
+        }
+        for environment_name in sorted(build_secret["variables"])
+    ]
+    for actual, expected in zip(variables, expected_records, strict=True):
+        if not isinstance(actual, dict):
+            raise PolicyError("release secret-manager variable evidence is malformed")
+        _require_exact_keys(
+            actual,
+            {"environmentName", "secret", "version", "valueDigest"},
+            "release secret-manager variable evidence",
+        )
+        if {key: actual.get(key) for key in expected} != expected:
+            raise PolicyError("release secret-manager numeric contract differs")
+        if not isinstance(actual["valueDigest"], str) or not IMAGE_DIGEST_RE.fullmatch(
+            actual["valueDigest"]
+        ):
+            raise PolicyError("release secret-manager value digest is invalid")
+    return evidence
 
 
 def _gcloud_secret_accessor(secret: str, version: int, project: str) -> bytes:
@@ -1791,17 +2020,11 @@ def build_receipt(
         isinstance(item, str) for item in inventory_findings
     ):
         raise PolicyError("rootfs inventory findings are malformed")
-    if build_secret_metadata is not None:
-        secret = profile["buildSecret"]
-        if secret is None:
-            raise PolicyError("unexpected build secret evidence")
-        if (
-            build_secret_metadata.get("id") != secret["id"]
-            or build_secret_metadata.get("target") != secret["target"]
-        ):
-            raise PolicyError("build secret evidence differs from the profile")
-    elif profile["buildSecret"] is not None:
-        raise PolicyError("required build secret evidence is absent")
+    build_secret_metadata = _validate_build_materialization_evidence(
+        profile=profile,
+        mode=mode,
+        evidence=build_secret_metadata,
+    )
 
     expected_invocation = {
         "schemaVersion": SCHEMA_VERSION,
@@ -1945,6 +2168,19 @@ def verify_receipt(
     actual_digest = f"sha256:{_sha256_bytes(_canonical_bytes(unsigned))}"
     if supplied_digest != actual_digest:
         raise PolicyError("receipt content digest is invalid")
+    receipt_build = receipt.get("build")
+    if not isinstance(receipt_build, dict):
+        raise PolicyError("receipt build evidence is absent")
+    _require_exact_keys(
+        receipt_build,
+        {"invocation", "metadata", "buildSecret"},
+        "receipt build evidence",
+    )
+    materialization_evidence = _validate_build_materialization_evidence(
+        profile=profile,
+        mode=expected_mode,
+        evidence=receipt_build["buildSecret"],
+    )
     expected = {
         "predicateType": PREDICATE_TYPE,
         "mode": expected_mode,
@@ -1970,6 +2206,7 @@ def verify_receipt(
         "inventoryDigest": inventory_digest,
         "inventoryEntryCount": inventory["entryCount"],
         "runtimeEvidence": inventory["policyEvidence"],
+        "buildMaterialization": materialization_evidence,
     }
     actual = {
         "predicateType": receipt.get("predicateType"),
@@ -2002,6 +2239,7 @@ def verify_receipt(
         "inventoryDigest": receipt.get("image", {}).get("inventoryDigest"),
         "inventoryEntryCount": receipt.get("image", {}).get("inventoryEntryCount"),
         "runtimeEvidence": receipt.get("image", {}).get("runtimeEvidence"),
+        "buildMaterialization": receipt_build["buildSecret"],
     }
     if actual != expected:
         raise PolicyError("receipt replay-binding tuple differs")
@@ -2416,6 +2654,29 @@ def _trusted_docker_environment() -> dict[str, str]:
     return environment
 
 
+def _materialize_profile_build_environment(
+    *,
+    profile: dict[str, Any],
+    contract: dict[str, Any],
+    output_path: Path,
+    mode: str,
+) -> dict[str, Any]:
+    if mode == "premerge":
+        return materialize_premerge_fixture(
+            profile=profile,
+            contract=contract,
+            output_path=output_path,
+        )
+    if mode == "release":
+        return materialize_management_environment(
+            profile=profile,
+            contract=contract,
+            output_path=output_path,
+            access_secret=_gcloud_secret_accessor,
+        )
+    raise PolicyError("build environment materialization mode is invalid")
+
+
 def trusted_build(
     *,
     repository: str,
@@ -2465,19 +2726,12 @@ def trusted_build(
         beacon_repository_root=beacon_repository_root,
     )
     _write_json(output_directory / "context-manifest.json", context_manifest)
-    secret_path = None
+    secret_path = (
+        None
+        if profile["buildSecret"] is None
+        else output_directory / "management-vite.env"
+    )
     secret_metadata = None
-    if profile["buildSecret"] is not None:
-        contract_path = context_root / profile["buildSecret"]["versionContractPath"]
-        contract = _read_json(contract_path)
-        secret_path = output_directory / "management-vite.env"
-        secret_metadata = materialize_management_environment(
-            profile=profile,
-            contract=contract,
-            output_path=secret_path,
-            access_secret=_gcloud_secret_accessor,
-        )
-
     metadata_path = output_directory / "build-metadata.json"
     iid_path = output_directory / "image-id.txt"
     command = [
@@ -2496,15 +2750,23 @@ def trusted_build(
         "--tag",
         image_tag,
     ]
-    if secret_path is not None:
-        command.extend(
-            [
-                "--secret",
-                f"id={profile['buildSecret']['id']},src={secret_path}",
-            ]
-        )
-    command.append(str(context_root))
     try:
+        if secret_path is not None:
+            contract_path = context_root / profile["buildSecret"]["versionContractPath"]
+            contract = _read_json(contract_path)
+            secret_metadata = _materialize_profile_build_environment(
+                profile=profile,
+                contract=contract,
+                output_path=secret_path,
+                mode=mode,
+            )
+            command.extend(
+                [
+                    "--secret",
+                    f"id={profile['buildSecret']['id']},src={secret_path}",
+                ]
+            )
+        command.append(str(context_root))
         _run(
             command,
             cwd=context_root,
@@ -2515,6 +2777,8 @@ def trusted_build(
         if secret_path is not None:
             try:
                 secret_path.unlink()
+            except FileNotFoundError:
+                pass
             except OSError as error:
                 raise PolicyError(
                     f"generated management build secret cleanup failed: {error}"

@@ -45,6 +45,21 @@
         "target": "/app/.env.production",
         "versionContractPath": "config/frontend-build-secret-versions.json",
         "project": "cognitum-20260110",
+        "premergeFixture": {
+          "kind": "premerge-fixture",
+          "mode": "premerge",
+          "source": "organization-profile",
+          "classification": "public-nonrelease",
+          "variables": {
+            "VITE_FIREBASE_API_KEY": "premerge-fixture-api-key",
+            "VITE_FIREBASE_APP_CHECK_SITE_KEY": "premerge-fixture-app-check-site-key",
+            "VITE_FIREBASE_APP_ID": "premerge-fixture-app-id",
+            "VITE_FIREBASE_AUTH_DOMAIN": "premerge-fixture-auth.invalid",
+            "VITE_FIREBASE_MESSAGING_SENDER_ID": "premerge-fixture-messaging-sender-id",
+            "VITE_FIREBASE_PROJECT_ID": "premerge-fixture-project-id"
+          },
+          "contentDigest": "sha256:ee8fed299c624eea5d1b8cb84df6a5ba7edd725c1abbdfc7b2bb66b1b3114818"
+        },
         "variables": {
           "VITE_FIREBASE_API_KEY": "FIREBASE_WEB_API_KEY",
           "VITE_FIREBASE_APP_CHECK_SITE_KEY": "FIREBASE_APP_CHECK_MANAGEMENT_SITE_KEY",
@@ -52,6 +67,14 @@
           "VITE_FIREBASE_AUTH_DOMAIN": "FIREBASE_AUTH_DOMAIN",
           "VITE_FIREBASE_MESSAGING_SENDER_ID": "FIREBASE_MESSAGING_SENDER_ID",
           "VITE_FIREBASE_PROJECT_ID": "FIREBASE_PROJECT_ID"
+        },
+        "versions": {
+          "VITE_FIREBASE_API_KEY": 3,
+          "VITE_FIREBASE_APP_CHECK_SITE_KEY": 1,
+          "VITE_FIREBASE_APP_ID": 2,
+          "VITE_FIREBASE_AUTH_DOMAIN": 1,
+          "VITE_FIREBASE_MESSAGING_SENDER_ID": 1,
+          "VITE_FIREBASE_PROJECT_ID": 1
         }
       },
       "baseImage": "nginx:alpine@sha256:4a73073bd557c65b759505da037898b61f1be6cbcc3c2c3aeac22d2a470c1752",
@@ -152,7 +175,7 @@
       "dockerfile": "Dockerfile",
       "dockerignore": ".dockerignore",
       "packagingFiles": {
-        ".dockerignore": "bfdb03c7bc92471158a9100cb90f49fbf3a524eed55dc7b170d6b19d75dad0cf",
+        ".dockerignore": "505964d0155b3172761c831cfb957c2da8d3edc2b44e313b5058dc18b7ed44f1",
         ".gitmodules": "a3c1a981289be20d90156902ecdd3db26775798652389ffe1f900a25355a4800",
         "Dockerfile": "0d5488d3353d90c602abc39b36db305b647008b9a53cbf5a4b0b01062e85ace7",
         "config/frontend-runtime-config.json": "fc4347ead1b4ae59336e0727faddf2d249809e30b5cbc0814f9cf1db6e0c1a67",
