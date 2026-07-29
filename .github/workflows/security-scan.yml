@@ -39,21 +39,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
       - name: Run gitleaks (current files, blocking)
         run: |
           set -euo pipefail
-          # Only fetch the org config when no repo-local override exists — it
-          # is pinned by commit and hash and stored outside the scan target.
-          CFG=()
-          if [ ! -f .gitleaks.toml ]; then
-            ORG_CONFIG="$RUNNER_TEMP/gitleaks.org.toml"
-            curl --proto '=https' --tlsv1.2 -fsSLo "$ORG_CONFIG" \
-              "https://raw.githubusercontent.com/cognitum-one/.github/${GITLEAKS_CONFIG_COMMIT}/gitleaks.toml"
-            echo "${GITLEAKS_CONFIG_SHA256}  ${ORG_CONFIG}" | sha256sum -c -
-            CFG=(--config "$ORG_CONFIG")
-          else
-            CFG=(--config .gitleaks.toml)
-          fi
+          # The candidate must not be able to replace its own security policy.
+          # Fetch the independently reviewed organization config unconditionally,
+          # pin it by commit and hash, and keep it outside the scan target.
+          ORG_CONFIG="$RUNNER_TEMP/gitleaks.org.toml"
+          curl --proto '=https' --tlsv1.2 -fsSLo "$ORG_CONFIG" \
+            "https://raw.githubusercontent.com/cognitum-one/.github/${GITLEAKS_CONFIG_COMMIT}/gitleaks.toml"
+          echo "${GITLEAKS_CONFIG_SHA256}  ${ORG_CONFIG}" | sha256sum -c -
           ARCHIVE="$RUNNER_TEMP/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
           curl --proto '=https' --tlsv1.2 -fsSLo "$ARCHIVE" \
             "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
@@ -62,7 +59,8 @@ jobs:
           ./gitleaks version | grep -F "$GITLEAKS_VERSION"
           # --no-git: scan the working tree (current files) only. Blocks new
           # secrets; ignores older commits (those are the history audit's job).
-          ./gitleaks detect --source . --no-git "${CFG[@]}" --redact --exit-code 1
+          ./gitleaks detect --source . --no-git \
+            --config "$ORG_CONFIG" --redact --exit-code 1
 
   secrets-history-audit:
     name: secret scan (full history audit)
@@ -73,19 +71,14 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           fetch-depth: 0
+          persist-credentials: false
       - name: Run gitleaks (full history, informational)
         run: |
           set -euo pipefail
-          CFG=()
-          if [ ! -f .gitleaks.toml ]; then
-            ORG_CONFIG="$RUNNER_TEMP/gitleaks.org.toml"
-            curl --proto '=https' --tlsv1.2 -fsSLo "$ORG_CONFIG" \
-              "https://raw.githubusercontent.com/cognitum-one/.github/${GITLEAKS_CONFIG_COMMIT}/gitleaks.toml"
-            echo "${GITLEAKS_CONFIG_SHA256}  ${ORG_CONFIG}" | sha256sum -c -
-            CFG=(--config "$ORG_CONFIG")
-          else
-            CFG=(--config .gitleaks.toml)
-          fi
+          ORG_CONFIG="$RUNNER_TEMP/gitleaks.org.toml"
+          curl --proto '=https' --tlsv1.2 -fsSLo "$ORG_CONFIG" \
+            "https://raw.githubusercontent.com/cognitum-one/.github/${GITLEAKS_CONFIG_COMMIT}/gitleaks.toml"
+          echo "${GITLEAKS_CONFIG_SHA256}  ${ORG_CONFIG}" | sha256sum -c -
           ARCHIVE="$RUNNER_TEMP/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
           curl --proto '=https' --tlsv1.2 -fsSLo "$ARCHIVE" \
             "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
@@ -94,7 +87,7 @@ jobs:
           ./gitleaks version | grep -F "$GITLEAKS_VERSION"
           # Findings do not fail this job because exit-code is zero. Scanner
           # integrity, execution, and report-parse failures remain blocking.
-          ./gitleaks detect --source . "${CFG[@]}" --redact \
+          ./gitleaks detect --source . --config "$ORG_CONFIG" --redact \
             --report-format json --report-path history.json --exit-code 0
           n="$(python3 -c "import json; print(len(json.load(open('history.json'))))")"
           if [ "$n" -gt 0 ]; then
@@ -114,6 +107,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
       - name: Write the OSV gate script
         run: |
           cat > .osv-gate.py <<'GATE_EOF'
