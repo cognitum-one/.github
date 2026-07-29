@@ -55,12 +55,14 @@ ROUTER_ARTIFACTS = {
         ),
     },
 }
-RUNTIME_RECEIPT_ENVIRONMENT = {
+RUNTIME_RECEIPT_EVIDENCE_ENVIRONMENT = {
     "OSV_RUNTIME_RECEIPT",
     "OSV_RUNTIME_INVENTORY",
     "OSV_RUNTIME_NONCE",
     "OSV_RUNTIME_IMAGE_NAME",
     "OSV_RUNTIME_IMAGE_ID",
+}
+RUNTIME_RECEIPT_GITHUB_ENVIRONMENT = {
     "GITHUB_REPOSITORY",
     "GITHUB_SHA",
     "GITHUB_RUN_ID",
@@ -69,6 +71,9 @@ RUNTIME_RECEIPT_ENVIRONMENT = {
     "GITHUB_WORKFLOW_REF",
     "GITHUB_WORKFLOW_SHA",
 }
+RUNTIME_RECEIPT_ENVIRONMENT = (
+    RUNTIME_RECEIPT_EVIDENCE_ENVIRONMENT | RUNTIME_RECEIPT_GITHUB_ENVIRONMENT
+)
 MAX_RUNTIME_EVIDENCE_BYTES = 512 * 1024 * 1024
 
 
@@ -154,16 +159,18 @@ def _verified_runtime_receipt_from_environment(
     repository: str,
     root: Path,
 ) -> bool:
-    present = {
-        name for name in RUNTIME_RECEIPT_ENVIRONMENT if os.environ.get(name)
+    # GitHub populates its run tuple for every repository. Only the five
+    # runtime outputs establish that a caller attempted to supply a receipt.
+    evidence_present = {
+        name for name in RUNTIME_RECEIPT_EVIDENCE_ENVIRONMENT if os.environ.get(name)
     }
-    if not present:
+    if not evidence_present:
         return False
+    present = {name for name in RUNTIME_RECEIPT_ENVIRONMENT if os.environ.get(name)}
     missing = RUNTIME_RECEIPT_ENVIRONMENT - present
     if missing:
         raise ValueError(
-            "runtime receipt environment is incomplete: "
-            + ", ".join(sorted(missing))
+            "runtime receipt environment is incomplete: " + ", ".join(sorted(missing))
         )
 
     receipt_path = _external_evidence_file(
@@ -199,9 +206,7 @@ def _verified_runtime_receipt_from_environment(
             verify_premerge_receipt,
         )
     except ImportError as error:
-        raise ValueError(
-            "immutable runtime receipt verifier is unavailable"
-        ) from error
+        raise ValueError("immutable runtime receipt verifier is unavailable") from error
 
     receipt = _read_external_json(
         str(receipt_path),
@@ -478,7 +483,9 @@ def evaluate(
 def _format(rows: list[tuple[str, str, str, float, str]]) -> list[str]:
     return [
         "  CVSS %.1f  %s@%s  %s  (%s)" % (score, name, version, advisory, source or "?")
-        for name, version, advisory, score, source in sorted(rows, key=lambda row: -row[3])
+        for name, version, advisory, score, source in sorted(
+            rows, key=lambda row: -row[3]
+        )
     ]
 
 
@@ -514,7 +521,9 @@ def main() -> int:
         for line in _format(reviewed):
             print(line)
     if blocking:
-        print(f"::error::{len(blocking)} High/Critical vulnerabilities WITH fixes available:")
+        print(
+            f"::error::{len(blocking)} High/Critical vulnerabilities WITH fixes available:"
+        )
         for line in _format(blocking):
             print(line)
         return 1

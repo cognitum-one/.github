@@ -14,8 +14,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from osv_gate import (
     ROUTER_EXCEPTION_EXPIRES,
     ROUTER_PROFILES,
+    RUNTIME_RECEIPT_EVIDENCE_ENVIRONMENT,
+    RUNTIME_RECEIPT_GITHUB_ENVIRONMENT,
     _verified_runtime_receipt_from_environment,
     evaluate,
+    main,
 )
 
 
@@ -51,7 +54,13 @@ def lock(version: str = "7.18.2") -> dict:
     }
 
 
-def report(source: str, *, package: str = "react-router", version: str = "7.18.2", advisory: str = "GHSA-qwww-vcr4-c8h2") -> dict:
+def report(
+    source: str,
+    *,
+    package: str = "react-router",
+    version: str = "7.18.2",
+    advisory: str = "GHSA-qwww-vcr4-c8h2",
+) -> dict:
     return {
         "results": [
             {
@@ -63,7 +72,9 @@ def report(source: str, *, package: str = "react-router", version: str = "7.18.2
                         "vulnerabilities": [
                             {
                                 "id": advisory,
-                                "affected": [{"ranges": [{"events": [{"fixed": "8.3.0"}]}]}],
+                                "affected": [
+                                    {"ranges": [{"events": [{"fixed": "8.3.0"}]}]}
+                                ],
                             }
                         ],
                     }
@@ -112,6 +123,22 @@ class OsvGateTest(unittest.TestCase):
             today=self.today,
             runtime_evidence_verified=True,
         )
+
+    @staticmethod
+    def github_environment(
+        repository: str = "cognitum-one/management",
+    ) -> dict[str, str]:
+        return {
+            "GITHUB_REPOSITORY": repository,
+            "GITHUB_SHA": "c" * 40,
+            "GITHUB_RUN_ID": "303",
+            "GITHUB_RUN_ATTEMPT": "2",
+            "GITHUB_JOB": "deps",
+            "GITHUB_WORKFLOW_REF": (
+                f"{repository}/.github/workflows/security.yml@refs/pull/69/merge"
+            ),
+            "GITHUB_WORKFLOW_SHA": "d" * 40,
+        }
 
     def test_accepts_only_the_exact_patched_static_runtime_record(self) -> None:
         blocking, reviewed = self.evaluate(report(str(self.management_lock)))
@@ -175,7 +202,9 @@ class OsvGateTest(unittest.TestCase):
 
     def test_registry_artifact_integrity_drift_is_not_excused(self) -> None:
         payload = json.loads(self.management_lock.read_text(encoding="utf-8"))
-        payload["packages"]["node_modules/react-router"]["integrity"] = "sha512-attacker"
+        payload["packages"]["node_modules/react-router"][
+            "integrity"
+        ] = "sha512-attacker"
         self.management_lock.write_text(json.dumps(payload), encoding="utf-8")
         blocking, reviewed = self.evaluate(report(str(self.management_lock)))
         self.assertEqual(len(blocking), 1)
@@ -183,9 +212,9 @@ class OsvGateTest(unittest.TestCase):
 
     def test_registry_artifact_url_drift_is_not_excused(self) -> None:
         payload = json.loads(self.management_lock.read_text(encoding="utf-8"))
-        payload["packages"]["node_modules/react-router"]["resolved"] = (
-            "https://attacker.invalid/react-router.tgz"
-        )
+        payload["packages"]["node_modules/react-router"][
+            "resolved"
+        ] = "https://attacker.invalid/react-router.tgz"
         self.management_lock.write_text(json.dumps(payload), encoding="utf-8")
         blocking, reviewed = self.evaluate(report(str(self.management_lock)))
         self.assertEqual(len(blocking), 1)
@@ -210,16 +239,62 @@ class OsvGateTest(unittest.TestCase):
                     root=self.root,
                 )
             )
-        with patch.dict(
-            "os.environ",
-            {"OSV_RUNTIME_RECEIPT": "/tmp/incomplete-receipt.json"},
-            clear=True,
-        ):
-            with self.assertRaisesRegex(ValueError, "environment is incomplete"):
+
+        evidence = {
+            "OSV_RUNTIME_RECEIPT": "/tmp/receipt.json",
+            "OSV_RUNTIME_INVENTORY": "/tmp/inventory.json",
+            "OSV_RUNTIME_NONCE": "/tmp/nonce.txt",
+            "OSV_RUNTIME_IMAGE_NAME": "registry.example/cognitum-management",
+            "OSV_RUNTIME_IMAGE_ID": "sha256:" + "b" * 64,
+        }
+        github = self.github_environment()
+        for missing_name in sorted(RUNTIME_RECEIPT_EVIDENCE_ENVIRONMENT):
+            partial = evidence | github
+            partial[missing_name] = ""
+            with (
+                self.subTest(missing_runtime_evidence=missing_name),
+                patch.dict("os.environ", partial, clear=True),
+                self.assertRaisesRegex(ValueError, "environment is incomplete"),
+            ):
                 _verified_runtime_receipt_from_environment(
                     repository="cognitum-one/management",
                     root=self.root,
                 )
+
+        for missing_name in sorted(RUNTIME_RECEIPT_GITHUB_ENVIRONMENT):
+            incomplete_context = evidence | github
+            incomplete_context[missing_name] = ""
+            with (
+                self.subTest(missing_github_context=missing_name),
+                patch.dict("os.environ", incomplete_context, clear=True),
+                self.assertRaisesRegex(ValueError, "environment is incomplete"),
+            ):
+                _verified_runtime_receipt_from_environment(
+                    repository="cognitum-one/management",
+                    root=self.root,
+                )
+
+    def test_cogs_github_context_without_runtime_evidence_runs_ordinary_gate(
+        self,
+    ) -> None:
+        report_path = self.root / "cogs-osv.json"
+        report_path.write_text('{"results":[]}\n', encoding="utf-8")
+        environment = self.github_environment("cognitum-one/cogs") | {
+            name: "" for name in RUNTIME_RECEIPT_EVIDENCE_ENVIRONMENT
+        }
+        environment.update(
+            {
+                "OSV_REPORT": str(report_path),
+                "OSV_REPOSITORY_ROOT": str(self.root),
+            }
+        )
+        with patch.dict("os.environ", environment, clear=True):
+            runtime_verified = _verified_runtime_receipt_from_environment(
+                repository="cognitum-one/cogs",
+                root=self.root,
+            )
+            self.assertFalse(runtime_verified)
+            self.assertEqual(main(), 0)
 
     def test_runtime_receipt_is_external_and_tuple_bound(self) -> None:
         with tempfile.TemporaryDirectory() as evidence_directory:
@@ -230,22 +305,12 @@ class OsvGateTest(unittest.TestCase):
             receipt_path.write_text("{}\n", encoding="utf-8")
             inventory_path.write_text("{}\n", encoding="utf-8")
             nonce_path.write_text("a" * 64 + "\n", encoding="ascii")
-            environment = {
+            environment = self.github_environment() | {
                 "OSV_RUNTIME_RECEIPT": str(receipt_path),
                 "OSV_RUNTIME_INVENTORY": str(inventory_path),
                 "OSV_RUNTIME_NONCE": str(nonce_path),
                 "OSV_RUNTIME_IMAGE_NAME": "registry.example/cognitum-management",
                 "OSV_RUNTIME_IMAGE_ID": "sha256:" + "b" * 64,
-                "GITHUB_REPOSITORY": "cognitum-one/management",
-                "GITHUB_SHA": "c" * 40,
-                "GITHUB_RUN_ID": "303",
-                "GITHUB_RUN_ATTEMPT": "2",
-                "GITHUB_JOB": "runtime-proof",
-                "GITHUB_WORKFLOW_REF": (
-                    "cognitum-one/management/.github/workflows/security.yml@"
-                    "refs/pull/1/merge"
-                ),
-                "GITHUB_WORKFLOW_SHA": "d" * 40,
             }
             with (
                 patch.dict("os.environ", environment, clear=True),
@@ -253,9 +318,7 @@ class OsvGateTest(unittest.TestCase):
                     "static_ui_runtime_receipt.load_policy",
                     return_value={"profiles": {}},
                 ) as load_policy,
-                patch(
-                    "static_ui_runtime_receipt.verify_premerge_receipt"
-                ) as verifier,
+                patch("static_ui_runtime_receipt.verify_premerge_receipt") as verifier,
             ):
                 self.assertTrue(
                     _verified_runtime_receipt_from_environment(
@@ -269,6 +332,14 @@ class OsvGateTest(unittest.TestCase):
             self.assertEqual(call["expected_image_id"], "sha256:" + "b" * 64)
             self.assertEqual(call["expected_nonce"], "a" * 64)
             self.assertEqual(call["expected_run_attempt"], "2")
+            self.assertEqual(call["expected_job"], "deps")
+            self.assertEqual(
+                call["expected_workflow_ref"],
+                (
+                    "cognitum-one/management/.github/workflows/security.yml@"
+                    "refs/pull/69/merge"
+                ),
+            )
 
     def test_nested_router_copy_is_not_excused(self) -> None:
         payload = json.loads(self.management_lock.read_text(encoding="utf-8"))
@@ -326,9 +397,9 @@ class OsvGateTest(unittest.TestCase):
 
     def test_malformed_affected_shape_fails_closed(self) -> None:
         payload = report(str(self.management_lock))
-        payload["results"][0]["packages"][0]["vulnerabilities"][0]["affected"] = (
-            "malformed-not-an-array"
-        )
+        payload["results"][0]["packages"][0]["vulnerabilities"][0][
+            "affected"
+        ] = "malformed-not-an-array"
         with self.assertRaisesRegex(ValueError, "affected records is not an array"):
             self.evaluate(payload)
 

@@ -156,6 +156,13 @@ candidate checkout, and is replay-bound to repository/owner numeric IDs,
 visibility, source SHA, workflow SHA/ref, run ID/attempt, job, image config,
 packaging hashes, and a fresh external 256-bit nonce.
 
+Runtime evidence is optional for repositories outside the two approved static
+UI profiles. Only the five `OSV_RUNTIME_*` receipt, inventory, nonce, image
+name, and image ID fields activate receipt verification; the `GITHUB_*` run
+tuple that Actions supplies to every repository does not. Once any runtime
+evidence field is non-empty, all five evidence fields and the complete GitHub
+run tuple are mandatory and verification fails closed on every omission.
+
 Website proof additionally checks out the profile-pinned private Beacon commit
 outside the candidate using the narrowly scoped
 `STATIC_UI_BEACON_READ_TOKEN`. The caller maps only that secret:
