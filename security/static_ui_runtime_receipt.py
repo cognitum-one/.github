@@ -83,6 +83,15 @@ MAX_POLICY_TEXT = 2 * 1024 * 1024
 MAX_POLICY_CAPTURE_BYTES = 16 * 1024 * 1024
 MAX_SECRET_VALUE = 16 * 1024
 MAX_BUILD_ENV_BYTES = 16 * 1024
+PREMERGE_ENV_VALUE_RE = re.compile(r"^premerge-fixture-[a-z0-9.-]+$")
+RELEASE_ENV_VALUE_RES = {
+    "VITE_FIREBASE_API_KEY": re.compile(r"^[A-Za-z0-9_-]{20,256}$"),
+    "VITE_FIREBASE_APP_CHECK_SITE_KEY": re.compile(r"^[A-Za-z0-9_-]{20,256}$"),
+    "VITE_FIREBASE_APP_ID": re.compile(r"^[A-Za-z0-9:._-]{8,256}$"),
+    "VITE_FIREBASE_AUTH_DOMAIN": re.compile(r"^[A-Za-z0-9.-]{1,253}$"),
+    "VITE_FIREBASE_MESSAGING_SENDER_ID": re.compile(r"^[0-9]{1,32}$"),
+    "VITE_FIREBASE_PROJECT_ID": re.compile(r"^[a-z][a-z0-9-]{4,28}[a-z0-9]$"),
+}
 PREMERGE_FIXTURE_KIND = "premerge-fixture"
 PREMERGE_FIXTURE_SOURCE = "organization-profile"
 PREMERGE_FIXTURE_CLASSIFICATION = "public-nonrelease"
@@ -927,7 +936,11 @@ def _validated_premerge_fixture(
                 f"{repository} premerge fixture value is not text for "
                 f"{environment_name}"
             )
-        value = _validate_secret_value(environment_name, raw_value.encode("utf-8"))
+        value = _validate_secret_value(
+            environment_name,
+            raw_value.encode("utf-8"),
+            mode="premerge",
+        )
         if not value.startswith("premerge-fixture-"):
             raise PolicyError(
                 f"{repository} premerge fixture value is not visibly nonrelease "
@@ -1042,7 +1055,7 @@ def _validated_version_contract(
     return records
 
 
-def _validate_secret_value(name: str, value: bytes) -> str:
+def _validate_secret_value(name: str, value: bytes, *, mode: str = "release") -> str:
     if not value or len(value) > MAX_SECRET_VALUE:
         raise PolicyError(f"secret value for {name} is empty or oversized")
     try:
@@ -1051,8 +1064,28 @@ def _validate_secret_value(name: str, value: bytes) -> str:
         raise PolicyError(f"secret value for {name} is not UTF-8") from error
     if any(ord(character) < 0x20 or ord(character) == 0x7F for character in text):
         raise PolicyError(f"secret value for {name} contains control characters")
-    if re.search(r"[\s'\"`\\<>$&,;]", text):
-        raise PolicyError(f"secret value for {name} is unsafe for a Vite env file")
+    if mode == "premerge":
+        if not PREMERGE_ENV_VALUE_RE.fullmatch(text):
+            raise PolicyError(
+                f"premerge fixture value for {name} is unsafe for a Vite env file"
+            )
+        return text
+    if mode != "release":
+        raise PolicyError("secret value validation mode is invalid")
+    pattern = RELEASE_ENV_VALUE_RES.get(name)
+    if pattern is None or not pattern.fullmatch(text):
+        raise PolicyError(
+            f"secret value for {name} is outside its canonical Vite env alphabet"
+        )
+    if name == "VITE_FIREBASE_AUTH_DOMAIN":
+        labels = text.split(".")
+        if len(labels) < 2 or any(
+            not label or len(label) > 63 or label.startswith("-") or label.endswith("-")
+            for label in labels
+        ):
+            raise PolicyError(
+                f"secret value for {name} is not a canonical DNS hostname"
+            )
     return text
 
 

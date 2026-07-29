@@ -464,6 +464,19 @@ class ProfileAndContextTest(unittest.TestCase):
 
 
 class BuildSecretTest(unittest.TestCase):
+    def release_secret_value(self, secret: str) -> bytes:
+        values = {
+            "FIREBASE_WEB_API_KEY": ("AIzaSyDummyPlaceholderStaticUiReceiptFixture"),
+            "FIREBASE_APP_CHECK_MANAGEMENT_SITE_KEY": (
+                "6LcognitumStaticUiReceiptFixture123456789"
+            ),
+            "FIREBASE_APP_ID": "1:186366152200:web:abcdef0123456789",
+            "FIREBASE_AUTH_DOMAIN": "project-12345.firebaseapp.com",
+            "FIREBASE_MESSAGING_SENDER_ID": "186366152200",
+            "FIREBASE_PROJECT_ID": "project-12345",
+        }
+        return values[secret].encode()
+
     def secret_profile(self) -> dict:
         value = profile()
         fixture_variables = {
@@ -519,7 +532,7 @@ class BuildSecretTest(unittest.TestCase):
 
         def access(name: str, version: int, project: str) -> bytes:
             calls.append((name, version, project))
-            return f"value-{version}".encode()
+            return self.release_secret_value(name)
 
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "build.env"
@@ -531,7 +544,11 @@ class BuildSecretTest(unittest.TestCase):
             )
             self.assertEqual(output.stat().st_mode & 0o777, 0o600)
             self.assertEqual([call[1] for call in calls], [11, 12])
-            self.assertNotIn("value-11", json.dumps(metadata))
+            for name, *_ in calls:
+                self.assertNotIn(
+                    self.release_secret_value(name).decode(),
+                    json.dumps(metadata),
+                )
             self.assertRegex(metadata["contentDigest"], r"^sha256:[0-9a-f]{64}$")
             self.assertEqual(metadata["kind"], "secret-manager")
             self.assertEqual(metadata["mode"], "release")
@@ -559,6 +576,65 @@ class BuildSecretTest(unittest.TestCase):
                     output_path=Path(directory) / "build.env",
                     access_secret=lambda *_: b"bad\nvalue",
                 )
+
+    def test_dotenv_metacharacters_and_field_alphabet_drift_are_rejected(
+        self,
+    ) -> None:
+        unsafe_values = (
+            b"AIzaSyValidPrefix1234567890#truncated",
+            b"$VITE_FIREBASE_PROJECT_ID",
+            b"${VITE_FIREBASE_PROJECT_ID}",
+            b"'AIzaSyQuoted12345678901234567890'",
+            b'"AIzaSyQuoted12345678901234567890"',
+            b"`AIzaSyQuoted12345678901234567890`",
+            b"AIzaSyBackslash\\Value123456789012345",
+            b"AIzaSyEquals=Value123456789012345678",
+        )
+        for index, unsafe in enumerate(unsafe_values):
+            with self.subTest(value=unsafe):
+                with tempfile.TemporaryDirectory() as directory:
+                    output = Path(directory) / f"release-{index}.env"
+
+                    def access(secret: str, *_: object) -> bytes:
+                        if secret == "FIREBASE_WEB_API_KEY":
+                            return unsafe
+                        return self.release_secret_value(secret)
+
+                    with self.assertRaisesRegex(
+                        receipt.PolicyError,
+                        "canonical Vite env alphabet",
+                    ):
+                        receipt.materialize_management_environment(
+                            profile=self.secret_profile(),
+                            contract=self.contract(),
+                            output_path=output,
+                            access_secret=access,
+                        )
+                    self.assertFalse(output.exists())
+
+        invalid_fields = {
+            "VITE_FIREBASE_AUTH_DOMAIN": b"https://project-12345.firebaseapp.com",
+            "VITE_FIREBASE_MESSAGING_SENDER_ID": b"sender-186366152200",
+            "VITE_FIREBASE_PROJECT_ID": b"Project_12345",
+        }
+        for name, value in invalid_fields.items():
+            with self.subTest(name=name):
+                with self.assertRaises(receipt.PolicyError):
+                    receipt._validate_secret_value(name, value)
+
+    def test_premerge_fixture_rejects_dotenv_comment_even_with_matching_digest(
+        self,
+    ) -> None:
+        profile_value = self.secret_profile()
+        fixture = profile_value["buildSecret"]["premergeFixture"]
+        fixture["variables"]["VITE_FIREBASE_API_KEY"] = "premerge-fixture-api#truncated"
+        content = "".join(
+            f"{key}={fixture['variables'][key]}\n"
+            for key in sorted(fixture["variables"])
+        ).encode()
+        fixture["contentDigest"] = f"sha256:{sha(content)}"
+        with self.assertRaisesRegex(receipt.PolicyError, "unsafe for a Vite env"):
+            receipt._validate_profile("example/static-ui", profile_value)
 
     def test_premerge_fixture_is_exact_public_nonrelease_profile_material(self) -> None:
         profile_value = self.secret_profile()
@@ -609,7 +685,7 @@ class BuildSecretTest(unittest.TestCase):
 
             def access(secret: str, version: int, project: str) -> bytes:
                 calls.append((secret, version, project))
-                return f"public-value-{version}".encode()
+                return self.release_secret_value(secret)
 
             with mock.patch.object(
                 receipt, "_gcloud_secret_accessor", side_effect=access
@@ -637,7 +713,7 @@ class BuildSecretTest(unittest.TestCase):
             def access(secret: str, *_: object) -> bytes:
                 if secret == "FIREBASE_PROJECT_ID":
                     raise receipt.PolicyError("missing exact numeric secret")
-                return b"public-value"
+                return self.release_secret_value(secret)
 
             with self.assertRaisesRegex(receipt.PolicyError, "missing exact numeric"):
                 receipt.materialize_management_environment(
@@ -679,7 +755,7 @@ class BuildSecretTest(unittest.TestCase):
                             raise receipt.PolicyError(
                                 "missing exact numeric secret version"
                             )
-                        return b"public-release-test-value"
+                        return self.release_secret_value(secret)
 
                     with self.assertRaisesRegex(
                         receipt.PolicyError, "missing exact numeric"
@@ -705,7 +781,7 @@ class BuildSecretTest(unittest.TestCase):
                 profile=profile_value,
                 contract=self.contract(),
                 output_path=root / "release.env",
-                access_secret=lambda *_: b"public-value",
+                access_secret=lambda secret, *_: self.release_secret_value(secret),
             )
         with self.assertRaisesRegex(receipt.PolicyError, "secret-manager"):
             receipt._validate_build_materialization_evidence(
