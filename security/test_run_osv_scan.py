@@ -24,7 +24,7 @@ class RecordingRunner:
         self,
         *,
         report_payload: object = None,
-        statuses: tuple[int, ...] = (0, 1),
+        statuses: tuple[int, ...] = (0, 0),
         report_mode: str = "valid",
     ) -> None:
         self.report_payload = (
@@ -86,7 +86,7 @@ class RunOsvScanTest(unittest.TestCase):
         )
 
     def test_runs_both_exact_hardened_commands(self) -> None:
-        runner = RecordingRunner(statuses=(1, 0))
+        runner = RecordingRunner(statuses=(0, 0))
         payload = self.run_scan(runner)
         self.assertEqual(payload, {"results": []})
         self.assertEqual(len(runner.calls), 2)
@@ -250,6 +250,50 @@ class RunOsvScanTest(unittest.TestCase):
                     self.run_scan(runner)
                 if self.report.exists() or self.report.is_symlink():
                     self.report.unlink()
+
+    def test_rejects_disagreeing_scan_statuses(self) -> None:
+        for statuses in ((0, 1), (1, 0)):
+            with self.subTest(statuses=statuses):
+                runner = RecordingRunner(statuses=statuses)
+                with self.assertRaisesRegex(ScanBoundaryError, "statuses disagree"):
+                    self.run_scan(runner)
+                if self.report.exists() or self.report.is_symlink():
+                    self.report.unlink()
+
+    def test_status_must_match_reported_vulnerability_count(self) -> None:
+        finding = {
+            "results": [
+                {
+                    "packages": [
+                        {
+                            "vulnerabilities": [
+                                {"id": "GHSA-mh99-v99m-4gvg"}
+                            ]
+                        }
+                    ]
+                }
+            ]
+        }
+        cases = (
+            ((1, 1), {"results": []}),
+            ((0, 0), finding),
+        )
+        for statuses, payload in cases:
+            with self.subTest(statuses=statuses):
+                runner = RecordingRunner(
+                    statuses=statuses,
+                    report_payload=payload,
+                )
+                with self.assertRaisesRegex(
+                    ScanBoundaryError,
+                    "status does not match",
+                ):
+                    self.run_scan(runner)
+                if self.report.exists() or self.report.is_symlink():
+                    self.report.unlink()
+
+        accepted = RecordingRunner(statuses=(1, 1), report_payload=finding)
+        self.assertEqual(self.run_scan(accepted), finding)
 
     def test_missing_empty_invalid_or_wrong_shape_reports_fail(self) -> None:
         cases = (

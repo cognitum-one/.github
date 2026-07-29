@@ -1,0 +1,286 @@
+{
+  "schemaVersion": 1,
+  "profiles": {
+    "cognitum-one/management": {
+      "status": "approved",
+      "pendingReason": null,
+      "repositoryIdentity": {
+        "repositoryId": "1211713591",
+        "ownerId": "256911919",
+        "visibility": "private"
+      },
+      "exception": {
+        "advisory": "GHSA-qwww-vcr4-c8h2",
+        "package": "react-router",
+        "version": "7.18.2",
+        "expiresExclusiveUtc": "2026-08-15",
+        "maintainerAdvisoryUrl": "https://github.com/remix-run/react-router/security/advisories/GHSA-qwww-vcr4-c8h2",
+        "packageManifestPath": "package.json",
+        "lockfilePath": "package-lock.json"
+      },
+      "contextSubdirectory": "management-ui",
+      "dockerfile": "Dockerfile",
+      "dockerignore": ".dockerignore",
+      "packagingFiles": {
+        ".dockerignore": "2363babe3be98f66da6c87bfcc8e55b60a7bd301924a3ed9a52a2b4f634ea90a",
+        "Dockerfile": "e94f37c4ddfa0fb5c382e91bee684c492bcd5172d38edf4ca7a56c1d4636c680",
+        "config/frontend-build-secret-versions.json": "530b3a0a63f2deb15647b4da796f97180f6bfb8bc3516ce14744357d9119556c",
+        "config/runtime-api-routes.allowlist": "2cbd390ff49481625bcef80221135244f367c6230f8636dda45d55774911b55f",
+        "nginx.conf": "52dab0a2216b2bba4959e89d0305f18c685420d86cc2633aef78b9e5ecda1550",
+        "package-lock.json": "bfe201ae0ae4412633948eea2e7163faac4bcbbdfa148b04d57bb0d2ab336f53",
+        "package.json": "9e3a2b1352994961bf3b93aa02a03012251d5f7268359a1863ed8487ca6dd85a",
+        "runtime-config-entrypoint.sh": "d9037d95a20ee15ab369f7cd7e00080a29e047195bb44dafb63cb2c441809ec5",
+        "scripts/read-frontend-build-secret-versions.mjs": "508345be98ab8c0b3e98f3b22951d8f0d0452ffe5f1d750df44c7e3768fbc5eb",
+        "scripts/validate-frontend-build-env.mjs": "9a1febbd7fc199dc4b0d05590f3c4f7368753124d568a6e1e4fb81bd0a966e8d",
+        "scripts/validate-management-ui-container-contract-selftest.mjs": "168a6b09ef8e1e39f167f6927720a6210115a50e62432b2f0fd9d45293e8bacb",
+        "scripts/validate-management-ui-container-contract.mjs": "f579f03d569b82a36050cd254bcae1e74975049671aacb9b71bcb3a7d49b76ed",
+        "scripts/validate-runtime-routing.sh": "e8fda451ea088e8203b6fb4cc9c38eae579e003fcf75db1b0aff19bae02075ef",
+        "scripts/write-env-production-selftest.mjs": "d88ee0e7c323882f95be232896bee53141384ec38185ec99e3e23c2da07ad881",
+        "vite.config.ts": "4c4f519a73a21ad04966e65b8594b10d2e6111b6ce1c93cb2b794e15debe4528",
+        "write-env-production.sh": "d11e3196859373bf1ab4177bfe6352acef67a121e5a06d6f7af91d75c566a622"
+      },
+      "submodules": {},
+      "buildSecret": {
+        "id": "management_vite_env",
+        "target": "/app/.env.production",
+        "versionContractPath": "config/frontend-build-secret-versions.json",
+        "project": "cognitum-20260110",
+        "variables": {
+          "VITE_FIREBASE_API_KEY": "FIREBASE_WEB_API_KEY",
+          "VITE_FIREBASE_APP_CHECK_SITE_KEY": "FIREBASE_APP_CHECK_MANAGEMENT_SITE_KEY",
+          "VITE_FIREBASE_APP_ID": "FIREBASE_APP_ID",
+          "VITE_FIREBASE_AUTH_DOMAIN": "FIREBASE_AUTH_DOMAIN",
+          "VITE_FIREBASE_MESSAGING_SENDER_ID": "FIREBASE_MESSAGING_SENDER_ID",
+          "VITE_FIREBASE_PROJECT_ID": "FIREBASE_PROJECT_ID"
+        }
+      },
+      "baseImage": "nginx:alpine@sha256:4a73073bd557c65b759505da037898b61f1be6cbcc3c2c3aeac22d2a470c1752",
+      "platform": {
+        "os": "linux",
+        "architecture": "amd64"
+      },
+      "imageConfig": {
+        "user": "nginx",
+        "workingDirectory": "/",
+        "entrypoint": [
+          "/usr/local/bin/runtime-config-entrypoint"
+        ],
+        "command": [
+          "nginx",
+          "-g",
+          "daemon off;"
+        ],
+        "environment": {
+          "ACME_VERSION": "0.4.1",
+          "DYNPKG_RELEASE": "1",
+          "MANAGEMENT_RUNTIME_ROUTE_POLICY": "/etc/nginx/management-runtime-routes.allowlist",
+          "NGINX_VERSION": "1.31.3",
+          "NJS_RELEASE": "1",
+          "NJS_VERSION": "1.0.0",
+          "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+          "PKG_RELEASE": "1"
+        },
+        "exposedPorts": [
+          "80/tcp",
+          "8080/tcp"
+        ],
+        "stopSignal": "SIGQUIT"
+      },
+      "runtime": {
+        "staticRoot": "/usr/share/nginx/html",
+        "indexPath": "/usr/share/nginx/html/index.html",
+        "nodeBinary": null,
+        "nodeEntrypoints": [],
+        "allowedPackageJsonPaths": [],
+        "allowedRuntimeScriptRoots": [
+          "/usr/local/bin/runtime-config-entrypoint",
+          "/usr/local/bin/validate-runtime-routing"
+        ]
+      },
+      "deployment": {
+        "configuredEnvironmentAllowlist": [
+          "MANAGEMENT_API_BASE_URL",
+          "MANAGEMENT_APP_ENV",
+          "MANAGEMENT_FIREBASE_DATABASE_ID",
+          "MANAGEMENT_FIREBASE_STORAGE_BUCKET"
+        ],
+        "systemEnvironmentAllowlist": [
+          "K_CONFIGURATION",
+          "K_REVISION",
+          "K_SERVICE",
+          "PORT"
+        ],
+        "forbiddenEnvironment": [
+          "BASH_ENV",
+          "ENV",
+          "LD_PRELOAD",
+          "NODE_ENV",
+          "NODE_OPTIONS",
+          "REACT_ROUTER_SERVER",
+          "REACT_SERVER_CONDITION"
+        ]
+      },
+      "release": {
+        "registryRepository": "us-central1-docker.pkg.dev/cognitum-20260110/cloud-run-source-deploy/cognitum-manage",
+        "sourceRef": "refs/heads/main",
+        "events": [
+          "push",
+          "workflow_dispatch"
+        ],
+        "job": "staging",
+        "workflowRef": "cognitum-one/management/.github/workflows/cd.yml@refs/heads/main"
+      }
+    },
+    "cognitum-one/website": {
+      "status": "approved",
+      "pendingReason": null,
+      "repositoryIdentity": {
+        "repositoryId": "1235738436",
+        "ownerId": "256911919",
+        "visibility": "private"
+      },
+      "exception": {
+        "advisory": "GHSA-qwww-vcr4-c8h2",
+        "package": "react-router",
+        "version": "7.18.2",
+        "expiresExclusiveUtc": "2026-08-15",
+        "maintainerAdvisoryUrl": "https://github.com/remix-run/react-router/security/advisories/GHSA-qwww-vcr4-c8h2",
+        "packageManifestPath": "package.json",
+        "lockfilePath": "package-lock.json"
+      },
+      "contextSubdirectory": ".",
+      "dockerfile": "Dockerfile",
+      "dockerignore": ".dockerignore",
+      "packagingFiles": {
+        ".dockerignore": "bfdb03c7bc92471158a9100cb90f49fbf3a524eed55dc7b170d6b19d75dad0cf",
+        ".gitmodules": "a3c1a981289be20d90156902ecdd3db26775798652389ffe1f900a25355a4800",
+        "Dockerfile": "0d5488d3353d90c602abc39b36db305b647008b9a53cbf5a4b0b01062e85ace7",
+        "config/frontend-runtime-config.json": "fc4347ead1b4ae59336e0727faddf2d249809e30b5cbc0814f9cf1db6e0c1a67",
+        "docker-entrypoint.sh": "14b44204f83b8208fd09c53035edcb684193fe2298f34aa6b85fd8f2afdcb37e",
+        "nginx.conf": "81e3b4d33c90eac87fcf9c52db8d449c6baa8a90edfbe018062627d0c77c645b",
+        "package-lock.json": "ea35b09d79e07e698184c027180fa5bcd9f24dcfd9683592ce81d8d113c9b3ab",
+        "package.json": "79f930b90a8b5e39e1fb2b71fb54e2a70a9a110a9f16fe30f0d398f164c66299",
+        "scripts/seal-runtime-config.mjs": "04da50b81e003a60e60e5d4b8380bceef37fddd77b0f589e117b0cf7ba67d861",
+        "vite.config.ts": "b07251b73d21925c6bd87a5fe543e13aa7164dcfa0caabfb71dd71352e34e25f"
+      },
+      "submodules": {
+        "beacon": {
+          "repository": "cognitum-one/beacon",
+          "remote": "https://github.com/cognitum-one/beacon.git",
+          "repositoryId": "1295863262",
+          "ownerId": "256911919",
+          "visibility": "private",
+          "commitSha": "3499f2cf7f6758efb6bc7a20867c24d95962df72",
+          "treeSha": "7e80dc2469af661d2269fc4b64e90de258df851e"
+        }
+      },
+      "buildSecret": null,
+      "baseImage": "nginx:alpine@sha256:4a73073bd557c65b759505da037898b61f1be6cbcc3c2c3aeac22d2a470c1752",
+      "platform": {
+        "os": "linux",
+        "architecture": "amd64"
+      },
+      "imageConfig": {
+        "user": "nginx",
+        "workingDirectory": "/",
+        "entrypoint": [
+          "/docker-entrypoint.sh"
+        ],
+        "command": [
+          "/docker-entrypoint.sh"
+        ],
+        "environment": {
+          "ACME_VERSION": "0.4.1",
+          "DYNPKG_RELEASE": "1",
+          "NGINX_VERSION": "1.31.3",
+          "NJS_RELEASE": "1",
+          "NJS_VERSION": "1.0.0",
+          "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+          "PKG_RELEASE": "1"
+        },
+        "exposedPorts": [
+          "80/tcp",
+          "8080/tcp"
+        ],
+        "stopSignal": "SIGQUIT"
+      },
+      "runtime": {
+        "staticRoot": "/usr/share/nginx/html",
+        "indexPath": "/usr/share/nginx/html/index.html",
+        "nodeBinary": "/usr/local/bin/node",
+        "nodeEntrypoints": [
+          "/app/beacon/proxy.js"
+        ],
+        "allowedPackageJsonPaths": [
+          "/app/beacon/package.json"
+        ],
+        "allowedRuntimeScriptRoots": [
+          "/app/beacon",
+          "/docker-entrypoint.sh"
+        ]
+      },
+      "deployment": {
+        "configuredEnvironmentAllowlist": [
+          "ALLOWED_ORIGIN",
+          "BEACON_UI_ONLY",
+          "COGNITUM_API_KEY",
+          "COGNITUM_API_ORIGIN",
+          "COGNITUM_DEPLOYMENT_ENV",
+          "COGNITUM_FUNCTIONS_ORIGIN",
+          "COGNITUM_SEO_BUCKET",
+          "COGNITUM_SITE_ORIGIN",
+          "VITE_API_URL",
+          "VITE_COGNITUM_API_HEALTH_URL",
+          "VITE_COGNITUM_API_URL",
+          "VITE_COGNITUM_MCP_BROWSER_URL",
+          "VITE_CONSULTANT_APPLICATION_ENDPOINT",
+          "VITE_FIREBASE_API_KEY",
+          "VITE_FIREBASE_APP_CHECK_SITE_KEY",
+          "VITE_FIREBASE_APP_ID",
+          "VITE_FIREBASE_AUTH_DOMAIN",
+          "VITE_FIREBASE_DATABASE_ID",
+          "VITE_FIREBASE_MESSAGING_SENDER_ID",
+          "VITE_FIREBASE_PROJECT_ID",
+          "VITE_FIREBASE_STORAGE_BUCKET",
+          "VITE_FIREBASE_VAPID_KEY",
+          "VITE_FUNCTIONS_URL",
+          "VITE_GOOGLE_ANALYTICS_MEASUREMENT_ID",
+          "VITE_GTM_ID",
+          "VITE_STRIPE_PUBLISHABLE_KEY",
+          "VITE_TURNSTILE_SITE_KEY"
+        ],
+        "systemEnvironmentAllowlist": [
+          "K_CONFIGURATION",
+          "K_REVISION",
+          "K_SERVICE",
+          "PORT"
+        ],
+        "forbiddenEnvironment": [
+          "BASH_ENV",
+          "BEACON_BIND_HOST",
+          "BEACON_TRUSTED_PROXY_HOPS",
+          "COGNITUM_NGINX_CONFIG",
+          "COGNITUM_RUNTIME_CONFIG_ONLY",
+          "COGNITUM_RUNTIME_MANIFEST",
+          "COGNITUM_STATIC_ROOT",
+          "ENV",
+          "LD_PRELOAD",
+          "NODE_ENV",
+          "NODE_OPTIONS",
+          "REACT_ROUTER_SERVER",
+          "REACT_SERVER_CONDITION"
+        ]
+      },
+      "release": {
+        "registryRepository": "us-central1-docker.pkg.dev/cognitum-20260110/cloud-run-source-deploy/cognitum-dashboard",
+        "sourceRef": "refs/heads/main",
+        "events": [
+          "workflow_dispatch",
+          "workflow_run"
+        ],
+        "job": "staging",
+        "workflowRef": "cognitum-one/website/.github/workflows/cd.yml@refs/heads/main"
+      }
+    }
+  }
+}

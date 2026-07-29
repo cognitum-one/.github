@@ -212,6 +212,24 @@ def _load_report(report: Path, *, repository_root: Path) -> dict[str, Any]:
     return payload
 
 
+def _vulnerability_count(payload: dict[str, Any]) -> int:
+    count = 0
+    for result in payload["results"]:
+        if not isinstance(result, dict):
+            raise ScanBoundaryError("OSV result is not an object")
+        packages = result.get("packages")
+        if not isinstance(packages, list):
+            raise ScanBoundaryError("OSV result packages is not an array")
+        for package in packages:
+            if not isinstance(package, dict):
+                raise ScanBoundaryError("OSV package result is not an object")
+            vulnerabilities = package.get("vulnerabilities")
+            if not isinstance(vulnerabilities, list):
+                raise ScanBoundaryError("OSV vulnerabilities is not an array")
+            count += len(vulnerabilities)
+    return count
+
+
 def run_osv_scan(
     *,
     binary: Path,
@@ -243,11 +261,31 @@ def run_osv_scan(
         config=policy,
         report=machine_report,
     )
-    _invoke(runner, human, repository_root=root, label="human-readable")
+    human_status = _invoke(
+        runner,
+        human,
+        repository_root=root,
+        label="human-readable",
+    )
     if machine_report.exists() or machine_report.is_symlink():
         raise ScanBoundaryError("human-readable scan unexpectedly created the report")
-    _invoke(runner, machine, repository_root=root, label="machine-readable")
-    return _load_report(machine_report, repository_root=root)
+    machine_status = _invoke(
+        runner,
+        machine,
+        repository_root=root,
+        label="machine-readable",
+    )
+    if human_status != machine_status:
+        raise ScanBoundaryError(
+            "human-readable and machine-readable OSV scan statuses disagree"
+        )
+    payload = _load_report(machine_report, repository_root=root)
+    vulnerability_count = _vulnerability_count(payload)
+    if (machine_status == 1) != (vulnerability_count > 0):
+        raise ScanBoundaryError(
+            "OSV scan status does not match the machine-readable vulnerability count"
+        )
+    return payload
 
 
 def _parser() -> argparse.ArgumentParser:
