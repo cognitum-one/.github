@@ -959,6 +959,27 @@ class BuildSecretTest(unittest.TestCase):
 
 
 class RuntimeInventoryTest(unittest.TestCase):
+    def test_image_inspect_uses_portable_cli_shape(self) -> None:
+        inspect_value = image_inspect()
+        with mock.patch.object(
+            receipt,
+            "_run",
+            return_value=json.dumps(inspect_value).encode("utf-8"),
+        ) as runner:
+            self.assertEqual(
+                receipt._docker_image_inspect("example.invalid/app:immutable"),
+                inspect_value,
+            )
+        runner.assert_called_once_with(
+            [
+                "docker",
+                "image",
+                "inspect",
+                "example.invalid/app:immutable",
+            ],
+            timeout=120,
+        )
+
     def test_static_nginx_runtime_passes(self) -> None:
         inventory = receipt.inventory_rootfs(io.BytesIO(good_tar()), profile())
         self.assertEqual(inventory["findings"], [])
