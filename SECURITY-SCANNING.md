@@ -52,6 +52,24 @@ It in turn:
   SHA-256 digests;
 - fetches the mandatory organization Gitleaks policy from an exact commit,
   verifies its SHA-256 digest, and ignores candidate-controlled replacements;
+- fetches the mandatory OSV policy and its negative tests from an exact commit,
+  verifies every SHA-256 digest, and executes the tests before evaluating the
+  candidate's scanner report;
+- runs OSV through the pinned organization wrapper with the pinned,
+  ignore-free organization config, `--no-ignore`, and `--all-vulns`; a
+  candidate `osv-scanner.toml`, `.gitignore`, lockfile `dev` flag, scanner
+  binary, config, or report path cannot suppress or replace evidence;
+- keeps scanner binaries, policies, and machine reports outside the untrusted
+  checkout and rejects symlinks, unexpected process statuses, empty or
+  malformed reports, and command-grammar drift;
+- downloads the organization-owned static-UI profile, trusted builder, and
+  their adversarial tests from the same immutable policy commit, verifies every
+  digest, and runs each test file directly;
+- for the exact `cognitum-one/website` and `cognitum-one/management` profiles,
+  exports a committed-only context, performs a no-cache `linux/amd64` build,
+  inventories the resulting root filesystem, and supplies the receipt,
+  inventory, independently generated nonce, image name, image config digest,
+  and complete GitHub replay tuple to the OSV exception gate;
 - treats a missing, invalid, or failed machine-readable OSV result as a failed
   security gate.
 
@@ -59,7 +77,169 @@ Version inputs are intentionally unsupported: changing a scanner requires a
 reviewed workflow commit that updates both its version and digest. The
 full-history job is informational with respect to findings, but tool download,
 integrity, and parse failures still fail that job rather than manufacturing a
-clean result.
+clean result. Every fixable High/Critical OSV finding blocks, including a
+finding whose candidate-controlled lock metadata labels it development-only.
+Fix or remove such dependencies rather than weakening the shared scanner.
+
+## Reviewed OSV database correction
+
+The only scanner-database correction is the React Router advisory
+`GHSA-qwww-vcr4-c8h2` at version `7.18.2`. The upstream maintainer advisory
+identifies `7.18.2` as patched, while the current OSV range still reports it as
+affected. The correction is intentionally narrower than a general allowlist:
+
+- only `cognitum-one/website` at `package-lock.json` and
+  `cognitum-one/management` at `management-ui/package-lock.json` are eligible;
+- the lock root must declare `react-router-dom` exactly as `7.18.2`, and both
+  resolved `react-router` and `react-router-dom` nodes must be exactly `7.18.2`;
+- neither lock may contain a second router copy or any React Server Components
+  package; the exact application manifest, scripts, shipped source tree, and
+  Vite configuration must contain no RSC dependency, condition, entry point,
+  or unstable API surface;
+- only that advisory/package/version tuple is corrected;
+- the correction expires at the start of `2026-08-15` UTC.
+
+Wrong repositories, paths, versions, dependency ranges, nested copies,
+advisory IDs, RSC surfaces, symlinks, oversized/unreadable source, duplicate
+JSON keys, malformed severity/report data, or an expired correction remain
+blocking. The organization security/release maintainers own the exception.
+Before expiry they must recheck the upstream maintainer advisory and OSV data,
+then either remove the correction or land a newly reviewed policy commit,
+expiry, hashes, and adversarial tests. Expiry itself blocks; it never silently
+extends.
+
+## Static-UI runtime evidence
+
+The Router correction is not a package-version allowlist. It is usable only
+when the same `deps` job proves that the reviewed repository produces the
+reviewed runtime. The evidence is generated under `$RUNNER_TEMP`, outside the
+candidate checkout, and is replay-bound to repository/owner numeric IDs,
+visibility, source SHA, workflow SHA/ref, run ID/attempt, job, image config,
+packaging hashes, and a fresh external 256-bit nonce.
+
+Website proof additionally checks out the profile-pinned private Beacon commit
+outside the candidate using the narrowly scoped
+`STATIC_UI_BEACON_READ_TOKEN`. The caller maps only that secret:
+
+```yaml
+permissions:
+  contents: read
+
+jobs:
+  security:
+    permissions:
+      contents: read
+    uses: cognitum-one/.github/.github/workflows/security-scan.yml@<FULL_ORG_SHA>
+    secrets:
+      static_ui_beacon_read_token: ${{ secrets.STATIC_UI_BEACON_READ_TOKEN }}
+```
+
+Management pre-merge builds use an exact organization-profiled public browser
+configuration fixture. The receipt labels it `premerge-fixture`,
+`public-nonrelease`, and `organization-profile`; the verifier recomputes its
+variable and content digests. It never authenticates to GCP and can never be
+replayed as release evidence. Release mode rejects that fixture and reads every
+profiled Secret Manager value at the committed numeric version using the
+dedicated staging builder identity. Missing secrets or identity bindings fail
+closed. Organization policy
+`16eb59995aa7378380c9b471ecd164cef42f8a87` additionally validates each
+release value against its variable-specific canonical alphabet (API key,
+reCAPTCHA key, app ID, DNS hostname, numeric sender ID, or Firebase project
+ID), while pre-merge values must match the narrower
+`premerge-fixture-[a-z0-9.-]+` grammar. This excludes dotenv delimiters and
+comment syntax such as `#`, so the bytes hashed in the receipt are exactly the
+bytes consumed by Vite.
+
+## Trusted staging image and attestation
+
+`.github/workflows/static-ui-release.yml` is the organization-owned release
+builder for the two approved profiles. A caller must pin it by the final full
+organization commit, grant only `contents: read`, `id-token: write`,
+and `attestations: write`, and map the exact staging WIF, builder service
+account, and (for website) Beacon read token. Artifact Registry authentication
+comes only from that dedicated GCP WIF identity; the workflow has no GitHub
+Packages write permission. Both the calling workflow and GCP WIF policy must
+identify the reusable workflow by its exact `job_workflow_ref`. The workflow
+rejects any identity other than
+`website-frontend-deploy-stg@cognitum-20260110.iam.gserviceaccount.com` or
+`management-ui-deploy-stg@cognitum-20260110.iam.gserviceaccount.com` with its
+matching environment-isolated provider.
+
+The workflow's `STATIC_UI_WORKFLOW_COMMIT` is a content commit used only to
+fetch and hash-check `static_ui_release_gate.py` and its tests without a
+self-referential Git commit. The caller pins the subsequent pin-only commit.
+The OIDC `job_workflow_sha`, `job_workflow_ref`, attestation signer digest, and
+verification flags bind that actually executed final reusable-workflow commit;
+they are not derived from the content commit.
+
+The workflow:
+
+1. requires current `refs/heads/main`, `workflow_sha == source_sha`, the
+   approved caller workflow/event/job, and the profile's exact Artifact
+   Registry repository;
+2. runs every immutable policy test directly, creates a fresh nonce outside
+   the output, builds with the organization grammar, and pushes only
+   `<approved-repository>:<source-sha>`;
+3. pulls and inventories `repository@sha256:digest` again, requiring the same
+   image config ID and byte-for-byte semantic inventory;
+4. signs the complete custom receipt with pinned `actions/attest` using
+   predicate type
+   `https://cognitum.one/attestations/static-ui-runtime/v1`;
+5. verifies the exact bundle with `gh attestation verify`, enforcing the
+   reusable signer workflow and signer digest, caller source digest/ref,
+   subject digest, predicate type, GitHub-hosted runner, and trusted timestamp;
+6. compares the verified statement's exact subject and predicate to the
+   independently revalidated release receipt and uploads non-secret evidence.
+
+This reusable workflow builds, pushes, attests, and verifies. It contains no
+Cloud Run deploy, traffic, invoker, IAM, billing, Secret Manager mutation, or
+production authority. A caller must make any later staging deploy/promotion job
+depend on the successful reusable job and must consume its exact
+`image_name@image_digest` output. Production remains separately authorized and
+is not enabled by this contract.
+
+## Cloud Run revision verification
+
+`.github/workflows/static-ui-revision.yml` is a read-only post-deployment gate.
+It authenticates a dedicated verifier and runs only `gcloud run revisions
+describe` and `gcloud run services describe`. It requires a pre-deployment
+expected environment contract plus the canonical spec digest captured from the
+Ready no-traffic candidate before promotion, then verifies:
+
+- the organization-owned staging service, runtime service account, one
+  container, image digest, default image command, and HTTP port 8080;
+- the exact configured environment set, with literal values represented only
+  by SHA-256 digests and secret references bound to positive numeric versions;
+- no volumes, volume mounts, startup dependencies, or forbidden runtime
+  environment;
+- unique `Ready=True` on both Revision and Service, exact
+  `status.imageDigest`, latest-created/latest-ready revision, approved ingress,
+  and a single untagged 100% revision traffic allocation.
+
+Deployment commands are caller-owned and must explicitly clear inherited state
+with `--clear-volumes`, `--clear-volume-mounts`, and the reviewed secret/env
+grammar before this verifier runs. Until a real staging revision passes this
+gate, no production promotion is implied or authorized.
+
+The read-only target identities are
+`website-release-verify-stg@cognitum-20260110.iam.gserviceaccount.com` and
+`management-ui-release-verify-stg@cognitum-20260110.iam.gserviceaccount.com`.
+They require only Artifact Registry metadata read plus Cloud Run Service and
+Revision `get`; they receive no deploy, traffic, actAs, IAM, Secret Manager, or
+production role. Their WIF bindings and secrets are intentionally external
+provisioning prerequisites, not changes performed by this repository.
+
+## Workflow mutation boundary
+
+`security/verify_static_ui_workflows.py` statically enforces the evidence path,
+test execution, immutable action/policy pins, nonce location, complete OSV
+environment tuple, release attestation flags, exact-digest inventory, read-only
+revision commands, and prohibited cloud mutations.
+`security/test_verify_static_ui_workflows.py` removes or weakens those controls
+one at a time and requires every mutation to fail. The
+`static-ui-policy-selftest` workflow runs all policy tests, the strict static
+verifier, actionlint, and ShellCheck. The bootstrap zero self-pin is accepted
+only by an explicit local review flag; the final branch check rejects it.
 
 ## metaharness / qe-harness integration (planned)
 

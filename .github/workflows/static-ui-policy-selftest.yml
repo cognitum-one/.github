@@ -1,0 +1,73 @@
+name: static-ui-policy-selftest
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/security-scan.yml"
+      - ".github/workflows/static-ui-*.yml"
+      - "security/**"
+      - "SECURITY-SCANNING.md"
+      - "workflow-templates/security.yml"
+      - "workflow-templates/security.properties.json"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/security-scan.yml"
+      - ".github/workflows/static-ui-*.yml"
+      - "security/**"
+      - "SECURITY-SCANNING.md"
+      - "workflow-templates/security.yml"
+      - "workflow-templates/security.properties.json"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  policy:
+    name: static UI policy and mutation suite
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+
+      - name: Run every organization policy test directly
+        run: |
+          set -euo pipefail
+          python3 -m py_compile \
+            security/osv_gate.py \
+            security/run_osv_scan.py \
+            security/static_ui_runtime_receipt.py \
+            security/static_ui_release_gate.py \
+            security/verify_static_ui_workflows.py
+          python3 security/test_osv_gate.py
+          python3 security/test_run_osv_scan.py
+          python3 security/test_static_ui_runtime_receipt.py
+          python3 security/test_static_ui_release_gate.py
+          python3 security/test_verify_static_ui_workflows.py
+          python3 security/verify_static_ui_workflows.py
+          python3 -m json.tool workflow-templates/security.properties.json >/dev/null
+
+      - name: Run hash-verified actionlint and ShellCheck
+        env:
+          ACTIONLINT_VERSION: "1.7.12"
+          ACTIONLINT_SHA256: "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8"
+        run: |
+          set -euo pipefail
+          TOOL_DIR="$RUNNER_TEMP/actionlint"
+          ARCHIVE="$RUNNER_TEMP/actionlint.tar.gz"
+          install -d -m 0700 "$TOOL_DIR"
+          curl --proto '=https' --tlsv1.2 -fsSLo "$ARCHIVE" \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          echo "${ACTIONLINT_SHA256}  ${ARCHIVE}" | sha256sum -c -
+          tar -xzf "$ARCHIVE" -C "$TOOL_DIR" actionlint
+          chmod 0500 "$TOOL_DIR/actionlint"
+          "$TOOL_DIR/actionlint" -version
+          "$TOOL_DIR/actionlint" -shellcheck shellcheck \
+            .github/workflows/security-scan.yml \
+            .github/workflows/static-ui-release.yml \
+            .github/workflows/static-ui-revision.yml \
+            .github/workflows/static-ui-policy-selftest.yml \
+            workflow-templates/security.yml

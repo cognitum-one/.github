@@ -1,7 +1,7 @@
 name: security-scan
 
 # Reusable org-wide security scan. Callers:
-#   jobs.scan.uses: cognitum-one/.github/.github/workflows/security-scan.yml@main
+#   jobs.scan.uses: cognitum-one/.github/.github/workflows/security-scan.yml@<full-commit-sha>
 #
 # Secrets are scanned in TWO modes (ADR-092):
 #   secrets               — CURRENT files only (--no-git), BLOCKING on every
@@ -10,17 +10,26 @@ name: security-scan
 #   secrets-history-audit — FULL history FINDINGS are informational, on the
 #                           weekly schedule (and manual dispatch) only.
 #                           Integrity, execution, and parse failures still block.
-# OSV policy: fails only on High/Critical vulnerabilities that have a fix, AND only
-#   when the affected package can actually ship. A finding reachable ONLY through
-#   devDependencies (test runners, coverage tooling, linters) never reaches a
-#   deployed artifact, so it is reported as a WARNING instead of blocking every PR
-#   in the org. Dev-only status is PROVEN from the npm lockfile's own `dev` flag;
-#   anything not provably dev-only still blocks (fail-closed), which includes every
-#   non-npm ecosystem (Cargo, Go, PyPI) where no such distinction is recorded.
-#   Nothing is hidden: dev-only findings are printed and written to the job summary.
+# OSV policy: every High/Critical vulnerability with a fix blocks. Candidate
+#   lockfile `dev` flags are not trusted to downgrade findings.
+# The sole database correction is GHSA-qwww-vcr4-c8h2 for react-router 7.18.2,
+# which the maintainer identifies as patched while OSV still models as affected.
+# It applies only to two reviewed repository/lockfile pairs, requires exact locked
+# router + router-dom versions, an exact root dependency, and no RSC package,
+# script, condition, import, or nested router surface. It expires 2026-08-15 UTC.
+# Every mismatch or expiry fails closed. The scanner always uses a hash-verified
+# organization config outside the candidate, disables candidate .gitignore
+# filtering, and emits its report outside the candidate. The correction, scan
+# wrapper, and their negative tests are fetched immutably and hash-verified.
 
 on:
   workflow_call:
+    secrets:
+      static_ui_beacon_read_token:
+        description: >-
+          Read-only token for the exact private cognitum-one/beacon commit.
+          Required only when the caller is cognitum-one/website.
+        required: false
 
 permissions:
   contents: read
@@ -32,6 +41,15 @@ env:
   GITLEAKS_CONFIG_SHA256: "5018f890f807791f06b3f3e49c543dde8bb96dae7f984d74437ec57cc8f75e8e"
   OSV_VERSION: "2.2.4"
   OSV_LINUX_AMD64_SHA256: "7702cd1e5d9f5059dd9570f4ad967f27d3c5f5391b371ec937b384c238177f55"
+  OSV_POLICY_COMMIT: "16eb59995aa7378380c9b471ecd164cef42f8a87"
+  OSV_GATE_SHA256: "a3e29809c90b583f659e7a6f12c2febd3d9c1c193c82de8f2b5510132da5b0a9"
+  OSV_GATE_TEST_SHA256: "e6f51ee132093c1834358419d2d01ac23be920e2573409c68be13e1b45fa62ab"
+  OSV_CONFIG_SHA256: "5bd10fc47448111e6d8bed4682b9b80e4c420ca6cb0808a252b8c6d8cd920c34"
+  OSV_RUNNER_SHA256: "32ae0d4a9e3d1e461e91fc0fcbd9c3888928282bbd2371ab3ddfa9872ee409c1"
+  OSV_RUNNER_TEST_SHA256: "c76a51f8bfceda09dfaa92bd479ca67a7ad893ca570a79ec5d3d2fb71d2bafdb"
+  STATIC_UI_PROFILES_SHA256: "881e31395caf6c8b49552206d35e9c3727cec291ebdedc2e7635a1923252a9f0"
+  STATIC_UI_RECEIPT_SHA256: "f3f1108a3ea1332a1c315b1c1618a48cb2928ac7686d454f182f547ced083d76"
+  STATIC_UI_RECEIPT_TEST_SHA256: "eeb3b1c0fabfee62cace50fae531c55db4a050482bc14eec875e501aae335666"
 
 jobs:
   secrets:
@@ -55,11 +73,15 @@ jobs:
           curl --proto '=https' --tlsv1.2 -fsSLo "$ARCHIVE" \
             "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
           echo "${GITLEAKS_LINUX_X64_SHA256}  ${ARCHIVE}" | sha256sum -c -
-          tar -xzf "$ARCHIVE" gitleaks
-          ./gitleaks version | grep -F "$GITLEAKS_VERSION"
+          GITLEAKS_DIR="$RUNNER_TEMP/gitleaks-bin"
+          install -d -m 0700 "$GITLEAKS_DIR"
+          tar -xzf "$ARCHIVE" -C "$GITLEAKS_DIR" gitleaks
+          GITLEAKS_BIN="$GITLEAKS_DIR/gitleaks"
+          test -f "$GITLEAKS_BIN" && test ! -L "$GITLEAKS_BIN"
+          "$GITLEAKS_BIN" version | grep -F "$GITLEAKS_VERSION"
           # --no-git: scan the working tree (current files) only. Blocks new
           # secrets; ignores older commits (those are the history audit's job).
-          ./gitleaks detect --source . --no-git \
+          "$GITLEAKS_BIN" detect --source . --no-git \
             --config "$ORG_CONFIG" --redact --exit-code 1
 
   secrets-history-audit:
@@ -83,20 +105,25 @@ jobs:
           curl --proto '=https' --tlsv1.2 -fsSLo "$ARCHIVE" \
             "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
           echo "${GITLEAKS_LINUX_X64_SHA256}  ${ARCHIVE}" | sha256sum -c -
-          tar -xzf "$ARCHIVE" gitleaks
-          ./gitleaks version | grep -F "$GITLEAKS_VERSION"
+          GITLEAKS_DIR="$RUNNER_TEMP/gitleaks-bin"
+          install -d -m 0700 "$GITLEAKS_DIR"
+          tar -xzf "$ARCHIVE" -C "$GITLEAKS_DIR" gitleaks
+          GITLEAKS_BIN="$GITLEAKS_DIR/gitleaks"
+          test -f "$GITLEAKS_BIN" && test ! -L "$GITLEAKS_BIN"
+          "$GITLEAKS_BIN" version | grep -F "$GITLEAKS_VERSION"
           # Findings do not fail this job because exit-code is zero. Scanner
           # integrity, execution, and report-parse failures remain blocking.
-          ./gitleaks detect --source . --config "$ORG_CONFIG" --redact \
-            --report-format json --report-path history.json --exit-code 0
-          n="$(python3 -c "import json; print(len(json.load(open('history.json'))))")"
+          HISTORY_REPORT="$RUNNER_TEMP/gitleaks-history.json"
+          "$GITLEAKS_BIN" detect --source . --config "$ORG_CONFIG" --redact \
+            --report-format json --report-path "$HISTORY_REPORT" --exit-code 0
+          n="$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))))' "$HISTORY_REPORT")"
           if [ "$n" -gt 0 ]; then
             echo "::warning::Full-history audit found $n secret finding(s) in git history — review (not blocking; may be removed/rotated secrets)."
             {
               echo "## 🔎 Full-history secret audit — $n finding(s)"
               echo "These are in git *history* (removed/rotated or historical fixtures). Rotate anything real; allowlist confirmed non-secrets in gitleaks.toml."
               echo ""
-              python3 -c "import json;[print('- \`'+x.get('RuleID','?')+'\` '+x.get('File','?')+':'+str(x.get('StartLine','?'))+' @ '+x.get('Commit','')[:8]) for x in json.load(open('history.json'))[:50]]" 2>/dev/null || true
+              python3 -c "import json,sys;[print('- \`'+x.get('RuleID','?')+'\` '+x.get('File','?')+':'+str(x.get('StartLine','?'))+' @ '+x.get('Commit','')[:8]) for x in json.load(open(sys.argv[1]))[:50]]" "$HISTORY_REPORT" 2>/dev/null || true
             } >> "$GITHUB_STEP_SUMMARY"
           else
             echo "Full-history audit: clean."
@@ -104,133 +131,193 @@ jobs:
 
   deps:
     name: dependency scan (OSV, fail on High+ fixable)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
+          fetch-depth: 0
           persist-credentials: false
-      - name: Write the OSV gate script
+      - name: Fetch and self-test the immutable organization OSV gate
         run: |
-          cat > .osv-gate.py <<'GATE_EOF'
-          import json, os, sys
+          set -euo pipefail
+          # Candidate repositories cannot replace this policy or its tests.
+          # The gate commit predates this workflow commit so the download is
+          # independently addressable and hash-verifiable (no self-reference).
+          POLICY_DIR="$RUNNER_TEMP/osv-policy"
+          install -d -m 0700 "$POLICY_DIR"
+          curl --proto '=https' --tlsv1.2 -fsSLo "$POLICY_DIR/osv_gate.py" \
+            "https://raw.githubusercontent.com/cognitum-one/.github/${OSV_POLICY_COMMIT}/security/osv_gate.py"
+          curl --proto '=https' --tlsv1.2 -fsSLo "$POLICY_DIR/test_osv_gate.py" \
+            "https://raw.githubusercontent.com/cognitum-one/.github/${OSV_POLICY_COMMIT}/security/test_osv_gate.py"
+          curl --proto '=https' --tlsv1.2 -fsSLo "$POLICY_DIR/osv-scanner.toml" \
+            "https://raw.githubusercontent.com/cognitum-one/.github/${OSV_POLICY_COMMIT}/security/osv-scanner.toml"
+          curl --proto '=https' --tlsv1.2 -fsSLo "$POLICY_DIR/run_osv_scan.py" \
+            "https://raw.githubusercontent.com/cognitum-one/.github/${OSV_POLICY_COMMIT}/security/run_osv_scan.py"
+          curl --proto '=https' --tlsv1.2 -fsSLo "$POLICY_DIR/test_run_osv_scan.py" \
+            "https://raw.githubusercontent.com/cognitum-one/.github/${OSV_POLICY_COMMIT}/security/test_run_osv_scan.py"
+          curl --proto '=https' --tlsv1.2 -fsSLo "$POLICY_DIR/static-ui-runtime-profiles.json" \
+            "https://raw.githubusercontent.com/cognitum-one/.github/${OSV_POLICY_COMMIT}/security/static-ui-runtime-profiles.json"
+          curl --proto '=https' --tlsv1.2 -fsSLo "$POLICY_DIR/static_ui_runtime_receipt.py" \
+            "https://raw.githubusercontent.com/cognitum-one/.github/${OSV_POLICY_COMMIT}/security/static_ui_runtime_receipt.py"
+          curl --proto '=https' --tlsv1.2 -fsSLo "$POLICY_DIR/test_static_ui_runtime_receipt.py" \
+            "https://raw.githubusercontent.com/cognitum-one/.github/${OSV_POLICY_COMMIT}/security/test_static_ui_runtime_receipt.py"
+          echo "${OSV_GATE_SHA256}  ${POLICY_DIR}/osv_gate.py" | sha256sum -c -
+          echo "${OSV_GATE_TEST_SHA256}  ${POLICY_DIR}/test_osv_gate.py" | sha256sum -c -
+          echo "${OSV_CONFIG_SHA256}  ${POLICY_DIR}/osv-scanner.toml" | sha256sum -c -
+          echo "${OSV_RUNNER_SHA256}  ${POLICY_DIR}/run_osv_scan.py" | sha256sum -c -
+          echo "${OSV_RUNNER_TEST_SHA256}  ${POLICY_DIR}/test_run_osv_scan.py" | sha256sum -c -
+          echo "${STATIC_UI_PROFILES_SHA256}  ${POLICY_DIR}/static-ui-runtime-profiles.json" | sha256sum -c -
+          echo "${STATIC_UI_RECEIPT_SHA256}  ${POLICY_DIR}/static_ui_runtime_receipt.py" | sha256sum -c -
+          echo "${STATIC_UI_RECEIPT_TEST_SHA256}  ${POLICY_DIR}/test_static_ui_runtime_receipt.py" | sha256sum -c -
+          python3 "$POLICY_DIR/test_osv_gate.py"
+          python3 "$POLICY_DIR/test_run_osv_scan.py"
+          python3 "$POLICY_DIR/test_static_ui_runtime_receipt.py"
 
-          # ---- Which (name, version) pairs are reachable ONLY via devDependencies? ----
-          # npm records this itself: in a lockfile v2/v3 `packages` map, an entry carries
-          # `dev: true` when nothing in the production graph reaches it. A package counts as
-          # dev-only for a given lockfile when EVERY entry for it in that lockfile is dev.
-          # Resolved per-lockfile and keyed by the scanner's own source path, so a package
-          # that is dev here and production there is never mistakenly excused.
-          def dev_only_pairs(lock_path):
-              out = {}
-              try:
-                  with open(lock_path) as fh:
-                      lock = json.load(fh)
-              except Exception:
-                  return out  # unreadable -> nothing is excused (fail-closed)
-              for path, meta in (lock.get("packages") or {}).items():
-                  if not path or not isinstance(meta, dict):
-                      continue  # "" is the root project itself
-                  name = meta.get("name") or path.split("node_modules/")[-1]
-                  ver = meta.get("version")
-                  if not name or not ver:
-                      continue
-                  is_dev = bool(meta.get("dev") or meta.get("devOptional"))
-                  key = (name, ver)
-                  # any non-dev occurrence wins -> the package can ship
-                  out[key] = is_dev and out.get(key, True)
-              return {k for k, v in out.items() if v}
+      - name: Set up the trusted Docker builder
+        if: >-
+          ${{
+            github.repository == 'cognitum-one/website' ||
+            github.repository == 'cognitum-one/management'
+          }}
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+        with:
+          install: true
 
-          try:
-              data = json.load(open("osv.json"))
-          except Exception as error:
-              print("::error::OSV JSON is missing or invalid: %s" % error)
-              sys.exit(2)
-          if not isinstance(data, dict) or not isinstance(data.get("results"), list):
-              print("::error::OSV JSON does not contain a results array")
-              sys.exit(2)
+      - name: Checkout the exact Beacon submodule source outside the candidate
+        id: beacon
+        if: ${{ github.repository == 'cognitum-one/website' }}
+        env:
+          GH_TOKEN: ${{ secrets.static_ui_beacon_read_token }}
+        run: |
+          set -euo pipefail
+          test -n "$GH_TOKEN" || {
+            echo "::error::The website runtime proof requires the scoped static_ui_beacon_read_token."
+            exit 1
+          }
+          POLICY_DIR="$RUNNER_TEMP/osv-policy"
+          BEACON_ROOT="$RUNNER_TEMP/static-ui-beacon"
+          test ! -e "$BEACON_ROOT"
+          BEACON_SHA="$(POLICY_DIR="$POLICY_DIR" python3 <<'PY'
+          import json
+          import os
+          import re
+          from pathlib import Path
 
-          blocking, dev_only = [], []
-          for res in data.get("results", []):
-              src = ((res.get("source") or {}).get("path")) or ""
-              excused = dev_only_pairs(src) if src.endswith("package-lock.json") else set()
-              for pkg in res.get("packages", []):
-                  sev = {}
-                  for grp in pkg.get("groups", []):
-                      for vid in grp.get("ids", []):
-                          sev[vid] = grp.get("max_severity", "") or "0"
-                  name = pkg["package"]["name"]
-                  ver = pkg["package"]["version"]
-                  for vuln in pkg.get("vulnerabilities", []):
-                      fixed = any(
-                          "fixed" in ev
-                          for aff in vuln.get("affected", [])
-                          for rng in aff.get("ranges", [])
-                          for ev in rng.get("events", [])
-                      )
-                      try:
-                          score = float(sev.get(vuln["id"], "0") or 0)
-                      except Exception:
-                          score = 0.0
-                      if not (fixed and score >= 7.0):
-                          continue
-                      row = (name, ver, vuln["id"], score, src)
-                      (dev_only if (name, ver) in excused else blocking).append(row)
+          policy = json.loads(
+              (Path(os.environ["POLICY_DIR"]) / "static-ui-runtime-profiles.json")
+              .read_text(encoding="utf-8")
+          )
+          sha = policy["profiles"]["cognitum-one/website"]["submodules"]["beacon"]["commitSha"]
+          if not isinstance(sha, str) or not re.fullmatch(r"[0-9a-f]{40}", sha):
+              raise SystemExit("invalid immutable Beacon commit in organization policy")
+          print(sha)
+          PY
+          )"
+          gh repo clone cognitum-one/beacon "$BEACON_ROOT" -- \
+            --filter=blob:none --no-checkout
+          git -C "$BEACON_ROOT" fetch --depth=1 origin "$BEACON_SHA"
+          git -C "$BEACON_ROOT" checkout --detach "$BEACON_SHA"
+          test "$(git -C "$BEACON_ROOT" rev-parse HEAD)" = "$BEACON_SHA"
+          echo "root=$BEACON_ROOT" >> "$GITHUB_OUTPUT"
 
-          def fmt(rows):
-              return [
-                  "  CVSS %.1f  %s@%s  %s  (%s)" % (s, n, v, i, p or "?")
-                  for n, v, i, s, p in sorted(rows, key=lambda x: -x[3])
-              ]
+      - name: Build and verify the committed static-UI runtime
+        id: runtime
+        if: >-
+          ${{
+            github.repository == 'cognitum-one/website' ||
+            github.repository == 'cognitum-one/management'
+          }}
+        env:
+          BEACON_ROOT: ${{ steps.beacon.outputs.root }}
+          REPOSITORY_VISIBILITY: ${{ github.event.repository.visibility }}
+        run: |
+          set -euo pipefail
+          test "$REPOSITORY_VISIBILITY" = "private"
+          POLICY_DIR="$RUNNER_TEMP/osv-policy"
+          NONCE_DIR="$RUNNER_TEMP/static-ui-runtime-nonce"
+          OUTPUT_DIR="$RUNNER_TEMP/static-ui-runtime-evidence"
+          install -d -m 0700 "$NONCE_DIR"
+          umask 077
+          openssl rand -hex 32 > "$NONCE_DIR/nonce"
+          chmod 0600 "$NONCE_DIR/nonce"
+          IMAGE_TAG="cognitum-static-ui/${GITHUB_REPOSITORY#*/}:${GITHUB_SHA}"
+          arguments=(
+            --policy "$POLICY_DIR/static-ui-runtime-profiles.json"
+            build
+            --repository "$GITHUB_REPOSITORY"
+            --repository-root "$GITHUB_WORKSPACE"
+            --source-sha "$GITHUB_SHA"
+            --output-directory "$OUTPUT_DIR"
+            --image-tag "$IMAGE_TAG"
+            --receipt-nonce-file "$NONCE_DIR/nonce"
+            --mode premerge
+          )
+          if [ "$GITHUB_REPOSITORY" = "cognitum-one/website" ]; then
+            test -n "$BEACON_ROOT"
+            arguments+=(--beacon-repository-root "$BEACON_ROOT")
+          fi
+          GITHUB_REPOSITORY_VISIBILITY="$REPOSITORY_VISIBILITY" \
+            python3 "$POLICY_DIR/static_ui_runtime_receipt.py" "${arguments[@]}"
+          rm -f -- "$OUTPUT_DIR/management-vite.env"
+          IMAGE_ID="$(tr -d '\r\n' < "$OUTPUT_DIR/image-id.txt")"
+          IMAGE_NAME="$(OUTPUT_DIR="$OUTPUT_DIR" python3 <<'PY'
+          import json
+          import os
+          import re
+          from pathlib import Path
 
-          if dev_only:
-              print(
-                  "::warning::%d High/Critical fixable vulnerability(ies) in DEV-ONLY dependencies "
-                  "(not shipped; not blocking) — fix them on the normal upgrade cadence:" % len(dev_only)
-              )
-              for line in fmt(dev_only):
-                  print(line)
-              summary = os.environ.get("GITHUB_STEP_SUMMARY")
-              if summary:
-                  with open(summary, "a") as fh:
-                      fh.write("## \u26a0\ufe0f %d dev-only High/Critical advisory(ies)\n" % len(dev_only))
-                      fh.write("Reachable only through devDependencies, so they never reach a deployed "
-                               "artifact and do not block. Still worth clearing.\n\n")
-                      for line in fmt(dev_only):
-                          fh.write("-%s\n" % line[1:])
+          receipt = json.loads(
+              (Path(os.environ["OUTPUT_DIR"]) / "static-ui-runtime-receipt.json")
+              .read_text(encoding="utf-8")
+          )
+          name = receipt["subject"]["name"]
+          if not isinstance(name, str) or not re.fullmatch(r"[a-z0-9./_-]+", name):
+              raise SystemExit("invalid receipt image name")
+          print(name)
+          PY
+          )"
+          [[ "$IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ ]]
+          {
+            echo "receipt=$OUTPUT_DIR/static-ui-runtime-receipt.json"
+            echo "inventory=$OUTPUT_DIR/rootfs-inventory.json"
+            echo "nonce=$NONCE_DIR/nonce"
+            echo "image_name=$IMAGE_NAME"
+            echo "image_id=$IMAGE_ID"
+          } >> "$GITHUB_OUTPUT"
 
-          if blocking:
-              print("::error::%d High/Critical vulnerabilities WITH fixes available:" % len(blocking))
-              for line in fmt(blocking):
-                  print(line)
-              sys.exit(1)
-
-          print("OK: no shippable High/Critical fixable vulnerabilities. "
-                "(Dev-only, lower-severity, and unfixable advisories above are informational.)")
-          GATE_EOF
       - name: Run OSV-Scanner
         run: |
           set -euo pipefail
-          curl --proto '=https' --tlsv1.2 -fsSLo osv-scanner \
+          POLICY_DIR="$RUNNER_TEMP/osv-policy"
+          OSV_BIN="$POLICY_DIR/osv-scanner"
+          OSV_REPORT="$RUNNER_TEMP/osv-report.json"
+          curl --proto '=https' --tlsv1.2 -fsSLo "$OSV_BIN" \
             "https://github.com/google/osv-scanner/releases/download/v${OSV_VERSION}/osv-scanner_linux_amd64"
-          echo "${OSV_LINUX_AMD64_SHA256}  osv-scanner" | sha256sum -c -
-          chmod +x osv-scanner
-          ./osv-scanner --version | grep -F "$OSV_VERSION"
-          # Human-readable table in the log (never fails the step here)
-          ./osv-scanner --recursive . || true
-          # Machine-readable for the gate. Exit 1 means findings; any other
-          # non-zero status is a scanner failure and must fail closed.
-          set +e
-          ./osv-scanner --recursive --format json . > osv.json
-          OSV_STATUS=$?
-          set -e
-          if [ "$OSV_STATUS" -ne 0 ] && [ "$OSV_STATUS" -ne 1 ]; then
-            echo "::error::OSV-Scanner failed with exit status $OSV_STATUS."
-            exit "$OSV_STATUS"
-          fi
-          test -s osv.json || {
-            echo "::error::OSV-Scanner produced no machine-readable result."
-            exit 1
-          }
+          echo "${OSV_LINUX_AMD64_SHA256}  ${OSV_BIN}" | sha256sum -c -
+          chmod 0500 "$OSV_BIN"
+          test -f "$OSV_BIN" && test ! -L "$OSV_BIN"
+          "$OSV_BIN" --version | grep -F "$OSV_VERSION"
+          python3 "$POLICY_DIR/run_osv_scan.py" \
+            --binary "$OSV_BIN" \
+            --config "$POLICY_DIR/osv-scanner.toml" \
+            --report "$OSV_REPORT" \
+            --repository-root "$GITHUB_WORKSPACE"
           # Gate: fail on High/Critical (CVSS>=7) fixable vulns that can SHIP.
-          # Dev-only npm findings are reported but do not block (see header).
-          python3 .osv-gate.py
+          # The exact, expiring React Router 7.18.2 OSV range correction is
+          # independently pinned organization policy; every other finding blocks.
+          OSV_REPORT="$OSV_REPORT" \
+          OSV_REPOSITORY_ROOT="$GITHUB_WORKSPACE" \
+          OSV_RUNTIME_RECEIPT="${{ steps.runtime.outputs.receipt }}" \
+          OSV_RUNTIME_INVENTORY="${{ steps.runtime.outputs.inventory }}" \
+          OSV_RUNTIME_NONCE="${{ steps.runtime.outputs.nonce }}" \
+          OSV_RUNTIME_IMAGE_NAME="${{ steps.runtime.outputs.image_name }}" \
+          OSV_RUNTIME_IMAGE_ID="${{ steps.runtime.outputs.image_id }}" \
+          GITHUB_REPOSITORY="$GITHUB_REPOSITORY" \
+          GITHUB_SHA="$GITHUB_SHA" \
+          GITHUB_RUN_ID="$GITHUB_RUN_ID" \
+          GITHUB_RUN_ATTEMPT="$GITHUB_RUN_ATTEMPT" \
+          GITHUB_JOB="$GITHUB_JOB" \
+          GITHUB_WORKFLOW_REF="$GITHUB_WORKFLOW_REF" \
+          GITHUB_WORKFLOW_SHA="$GITHUB_WORKFLOW_SHA" \
+            python3 "$POLICY_DIR/osv_gate.py"

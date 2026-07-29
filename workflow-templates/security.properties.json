@@ -1,6 +1,6 @@
 {
   "name": "Security scan (cognitum-one)",
-  "description": "Gitleaks secret scan (full history) + OSV dependency scan. Calls the shared org reusable workflow.",
+  "description": "Gitleaks + OSV plus org-owned static-UI runtime receipts for approved Router exception callers.",
   "iconName": "shield",
   "categories": ["Security", "Rust", "TypeScript", "Python"]
 }
