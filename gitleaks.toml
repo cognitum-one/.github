@@ -49,6 +49,26 @@ paths = [
   # venue — config/security.example.json: fabricated example values in a
   # file explicitly named `*.example.*`, meant to be copied/edited, not run.
   '''.*\.example\.[a-z]+$''',
+
+  # 2026-07-29 website migration (see the block below the `regexes` list for
+  # why these arrived here now). Two SPECIFIC FILES, same "labelled file"
+  # precedent as office's test_support.rs and console's envelope.rs — used
+  # instead of a value regex because both values are long hex strings, and
+  # embedding those in this file is the practice the header deliberately avoids.
+  #
+  # website — ADR-037 documents the Rust SDK's `keypair.public_key_hex()` and
+  # prints its output in a `// =>` comment. A PUBLIC key, in a doc, by
+  # definition not a secret; the `.*\.pub$` and cert rules above already state
+  # that principle, they just do not reach a .md file.
+  '''plans/ADR-037-cognitum-rust-sdk\.md''',
+  # website — PasswordGate.tsx:9 is the SHA-256 of a pitch-deck gate password.
+  # A hash, not a credential, and the gated content is a CES pitch deck rather
+  # than customer data. NOTE, carried over from the repo-local config so it is
+  # not lost: the source plaintext is disclosed in an adjacent comment, which
+  # defeats the point of hashing. That is a real (low-severity) issue and is
+  # tracked separately — allowlisting here suppresses a FALSE POSITIVE about a
+  # secret, not that finding.
+  '''src/components/pitch/PasswordGate\.tsx''',
 ]
 
 # Obvious placeholders that are safe to ignore anywhere they appear.
@@ -60,6 +80,35 @@ regexes = [
   # api's README quickstart: `curl -H "X-API-Key: cog_yourkeyhere" ...`.
   # Verified 2026-07-06: doc-example placeholder, not a real cog_ key.
   '''cog_yourkeyhere''',
+
+  # ── website, migrated 2026-07-29 ──────────────────────────────────────────
+  # These are the exact siblings of `cog_yourkeyhere` above. They lived in
+  # website/.gitleaks.toml because, when they were verified on 2026-07-06, the
+  # reusable workflow PREFERRED a repo-local config. cad8f52 ("prevent caller
+  # policy bypass") deliberately made repo-local configs inert — correctly, a
+  # PR must not be able to relax the gate reviewing it — but the entries that
+  # depended on that mechanism were never moved here, so website's secret scan
+  # went red on 45 findings with no true positive among them.
+  #
+  # All 45 collapse to six values. Re-verified against the source lines on
+  # 2026-07-29, not inherited on trust:
+  #   38x  cog_your_api_key   PublicApiPage/McpTools/DeveloperPortal/SdkJs —
+  #                           rendered `curl -H "X-API-Key: ..."` examples that
+  #                           are page CONTENT shown to site visitors.
+  #    2x  cog_your_key       same, other pages.
+  #    2x  cog_abc123...      docs/seed.md `Authorization: Bearer` examples.
+  #    1x  ChaCha20-Poly1305  marketing copy naming a CIPHER. Flagged as a
+  #                           credential because it sits after "key exchange,".
+  #   (the remaining 2 are the two files path-allowlisted above)
+  #
+  # Deliberately VALUE regexes, not path allowlists. website/.gitleaks.toml
+  # suppressed every rule across 8 whole files; these six strings are all that
+  # is actually suppressed, so the org gate ends up STRICTER on website than
+  # its repo-local config ever was.
+  '''cog_your_api_key''',
+  '''cog_your_key''',
+  '''cog_abc123\.\.\.''',
+  '''ChaCha20-Poly1305''',
 ]
 
 # The real Firebase web key formerly in website/.env.production is deliberately
