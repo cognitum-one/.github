@@ -221,6 +221,63 @@ class OsvGateTest(unittest.TestCase):
                     root=self.root,
                 )
 
+    def test_runtime_receipt_not_applicable_under_a_REAL_actions_environment(self) -> None:
+        # The regression. `test_runtime_receipt_environment_is_all_or_nothing` above asserts the
+        # not-applicable branch with `clear=True` — an empty environment, which never occurs on a
+        # runner. The workflow exports the GITHUB_* context unconditionally and passes the
+        # OSV_RUNTIME_* through as EMPTY strings when the `id: runtime` step is skipped, so on every
+        # repository other than website and management the gate raised instead of returning False:
+        #
+        #   ##[error]OSV JSON is missing, malformed, or unsafe: runtime receipt environment is
+        #   incomplete: OSV_RUNTIME_IMAGE_ID, OSV_RUNTIME_IMAGE_NAME, OSV_RUNTIME_INVENTORY,
+        #   OSV_RUNTIME_NONCE, OSV_RUNTIME_RECEIPT
+        #
+        # A fixture that cannot occur in the environment under test proves nothing about it.
+        environment = {
+            "GITHUB_REPOSITORY": "cognitum-one/cognitum",
+            "GITHUB_SHA": "0" * 40,
+            "GITHUB_RUN_ID": "30440670487",
+            "GITHUB_RUN_ATTEMPT": "1",
+            "GITHUB_JOB": "deps",
+            "GITHUB_WORKFLOW_REF": (
+                "cognitum-one/.github/.github/workflows/security-scan.yml@refs/heads/main"
+            ),
+            "GITHUB_WORKFLOW_SHA": "1" * 40,
+            "OSV_RUNTIME_RECEIPT": "",
+            "OSV_RUNTIME_INVENTORY": "",
+            "OSV_RUNTIME_NONCE": "",
+            "OSV_RUNTIME_IMAGE_NAME": "",
+            "OSV_RUNTIME_IMAGE_ID": "",
+        }
+        with patch.dict("os.environ", environment, clear=True):
+            self.assertFalse(
+                _verified_runtime_receipt_from_environment(
+                    repository="cognitum-one/cognitum",
+                    root=self.root,
+                )
+            )
+
+    def test_runtime_receipt_context_is_still_required_when_a_receipt_exists(self) -> None:
+        # The discriminating half. Splitting the set could have been done by dropping the GITHUB_*
+        # completeness check altogether, which would pass the test above and silently stop requiring
+        # the run context that binds a receipt to the run that produced it.
+        with patch.dict(
+            "os.environ",
+            {
+                "OSV_RUNTIME_RECEIPT": "/tmp/receipt.json",
+                "OSV_RUNTIME_INVENTORY": "/tmp/inventory.json",
+                "OSV_RUNTIME_NONCE": "/tmp/nonce.txt",
+                "OSV_RUNTIME_IMAGE_NAME": "image",
+                "OSV_RUNTIME_IMAGE_ID": "sha256:0",
+            },
+            clear=True,
+        ):
+            with self.assertRaisesRegex(ValueError, "GITHUB_REPOSITORY"):
+                _verified_runtime_receipt_from_environment(
+                    repository="cognitum-one/website",
+                    root=self.root,
+                )
+
     def test_runtime_receipt_is_external_and_tuple_bound(self) -> None:
         with tempfile.TemporaryDirectory() as evidence_directory:
             evidence_root = Path(evidence_directory)

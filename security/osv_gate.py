@@ -55,12 +55,20 @@ ROUTER_ARTIFACTS = {
         ),
     },
 }
-RUNTIME_RECEIPT_ENVIRONMENT = {
+# Whether a runtime receipt APPLIES is decided by the receipt-bearing variables alone. They come
+# from the `id: runtime` step, which is gated to the repositories that build a static-UI image.
+RUNTIME_RECEIPT_EVIDENCE_ENVIRONMENT = {
     "OSV_RUNTIME_RECEIPT",
     "OSV_RUNTIME_INVENTORY",
     "OSV_RUNTIME_NONCE",
     "OSV_RUNTIME_IMAGE_NAME",
     "OSV_RUNTIME_IMAGE_ID",
+}
+# These are exported unconditionally by the workflow, so their presence says nothing about whether
+# a receipt exists. They are required for COMPLETENESS once a receipt is in play, and must not
+# participate in the applicability decision — including them made the "no receipt here" branch
+# unreachable on Actions, so every repository without a runtime step failed closed.
+RUNTIME_RECEIPT_CONTEXT_ENVIRONMENT = {
     "GITHUB_REPOSITORY",
     "GITHUB_SHA",
     "GITHUB_RUN_ID",
@@ -69,6 +77,9 @@ RUNTIME_RECEIPT_ENVIRONMENT = {
     "GITHUB_WORKFLOW_REF",
     "GITHUB_WORKFLOW_SHA",
 }
+RUNTIME_RECEIPT_ENVIRONMENT = (
+    RUNTIME_RECEIPT_EVIDENCE_ENVIRONMENT | RUNTIME_RECEIPT_CONTEXT_ENVIRONMENT
+)
 MAX_RUNTIME_EVIDENCE_BYTES = 512 * 1024 * 1024
 
 
@@ -154,11 +165,21 @@ def _verified_runtime_receipt_from_environment(
     repository: str,
     root: Path,
 ) -> bool:
+    # APPLICABILITY is decided by the evidence variables alone. The workflow exports the GITHUB_*
+    # context unconditionally, so asking "is any expected variable set?" was always true and the
+    # not-applicable branch below could never be taken on Actions.
+    evidence_present = {
+        name
+        for name in RUNTIME_RECEIPT_EVIDENCE_ENVIRONMENT
+        if os.environ.get(name)
+    }
+    if not evidence_present:
+        return False
+    # COMPLETENESS still binds, and still binds on the whole set: a partial receipt is a broken
+    # receipt, and the run context is required to verify the one that is present.
     present = {
         name for name in RUNTIME_RECEIPT_ENVIRONMENT if os.environ.get(name)
     }
-    if not present:
-        return False
     missing = RUNTIME_RECEIPT_ENVIRONMENT - present
     if missing:
         raise ValueError(
