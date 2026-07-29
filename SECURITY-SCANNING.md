@@ -33,10 +33,14 @@ Or add the CI workflow from the GitHub UI: **Actions → New workflow →
 
 ## Allowlist
 
-`gitleaks.toml` extends the default ruleset with a hand-verified allowlist of
-known test fixtures (benchmark constants, doc placeholders, test-only keys).
-Adding an entry is a security decision — verify the match is genuinely not a
-secret before allowlisting it.
+The organization `gitleaks.toml` extends the default ruleset with a
+hand-verified allowlist of known test fixtures (benchmark constants, doc
+placeholders, test-only keys). The reusable CI workflow always uses that
+independently reviewed, commit-pinned, hash-verified policy. It intentionally
+ignores a caller repository's candidate-controlled `.gitleaks.toml`, because a
+pull request must not be able to relax the gate that reviews that same pull
+request. Adding an organization entry is a security decision — verify the match
+is genuinely not a secret before allowlisting it.
 
 ## Scanner supply chain and failure policy
 
@@ -46,8 +50,8 @@ It in turn:
 - pins `actions/checkout` by full SHA;
 - pins Gitleaks and OSV-Scanner to exact versions and verified release-asset
   SHA-256 digests;
-- fetches the fallback organization Gitleaks policy from an exact commit and
-  verifies its SHA-256 digest; and
+- fetches the mandatory organization Gitleaks policy from an exact commit,
+  verifies its SHA-256 digest, and ignores candidate-controlled replacements;
 - treats a missing, invalid, or failed machine-readable OSV result as a failed
   security gate.
 
