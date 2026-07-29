@@ -48,6 +48,19 @@ The reusable workflow is immutable only when callers pin its full commit SHA.
 It in turn:
 
 - pins `actions/checkout` by full SHA;
+- downloads the official Buildx `v0.33.0` Linux AMD64 release asset into
+  runner-temporary storage, verifies the independently recomputed SHA-256
+  `9426a15411f35f635afef3f5d3bae53155c3e30d26dee430cc968e13d34be49f`
+  before making or executing a plugin, installs it only under an initially
+  empty job-scoped `DOCKER_CONFIG`, and asserts both the direct plugin and
+  Docker CLI report revision
+  `f7897eba028583e0071642db3c011e860444f8cf`;
+- pins the official `moby/buildkit:v0.30.0` OCI index by immutable digest,
+  requires its `linux/amd64` platform manifest through the
+  `docker-container` driver, isolates both the daemon container and OCI worker
+  on bridge networks, replaces the Buildx action's insecure-entitlement
+  defaults with the safe `--oci-worker-net=bridge` daemon flag, and forbids
+  the deprecated `docker build` install alias;
 - pins Gitleaks and OSV-Scanner to exact versions and verified release-asset
   SHA-256 digests;
 - fetches the mandatory organization Gitleaks policy from an exact commit,
@@ -80,6 +93,32 @@ integrity, and parse failures still fail that job rather than manufacturing a
 clean result. Every fixable High/Critical OSV finding blocks, including a
 finding whose candidate-controlled lock metadata labels it development-only.
 Fix or remove such dependencies rather than weakening the shared scanner.
+
+The SHA-pinned `docker/setup-buildx-action` commit
+`8d2750c68a42422c14e847fe6c8ac0403b4cbd6f` is deliberately given no
+`version` or `cache-binary` input. Its packaged
+`@docker/actions-toolkit` 0.63.0 resolves release information from
+`buildx-releases.json` on the toolkit's mutable `main` branch and downloads
+GitHub release assets without checking a release checksum. A
+`version: v0.33.0` input would therefore execute downloaded bytes before this
+policy could verify them. The workflow instead installs the hash-verified
+client first; the action detects that exact job-scoped plugin and skips its
+downloader. GitHub release hosting remains an availability and asset mutability
+dependency, but replacement bytes cannot execute unless they still match the
+locally pinned SHA-256. The checksum was independently recomputed from the
+reviewed Linux AMD64 asset; it is not treated as immutable metadata supplied by
+the same release endpoint.
+
+Buildx container drivers may independently append the daemon compatibility
+flag `--allow-insecure-entitlement=network.host` even after the setup action's
+two insecure defaults have been replaced. That daemon capability is not a
+client grant: every trusted build uses the exact organization command without
+`--allow`, and the static verifier rejects workflow-authored
+`--allow network.host`, `--allow security.insecure`, host-network selections,
+or daemon insecure-entitlement flags. The daemon container uses Docker's
+bridge network and the OCI worker uses BuildKit's bridge network. The residual
+daemon-level compatibility flag remains upstream behavior; any future client
+entitlement or host-network requirement requires a new reviewed policy change.
 
 ## Reviewed OSV database correction
 
@@ -232,9 +271,12 @@ provisioning prerequisites, not changes performed by this repository.
 ## Workflow mutation boundary
 
 `security/verify_static_ui_workflows.py` statically enforces the evidence path,
-test execution, immutable action/policy pins, nonce location, complete OSV
-environment tuple, release attestation flags, exact-digest inventory, read-only
-revision commands, and prohibited cloud mutations.
+test execution, immutable action/policy/BuildKit pins, the hash-before-execution
+Buildx client install and exact Docker plugin resolution, safe BuildKit daemon
+flags, absence of setup-action binary overrides and the deprecated install
+alias, nonce location, complete OSV environment tuple, release attestation
+flags, exact-digest inventory, read-only revision commands, and prohibited
+cloud mutations.
 `security/test_verify_static_ui_workflows.py` removes or weakens those controls
 one at a time and requires every mutation to fail. The
 `static-ui-policy-selftest` workflow runs all policy tests, the strict static
