@@ -30,6 +30,11 @@ on:
           Read-only token for the exact private cognitum-one/website and
           cognitum-one/beacon repository identities and Beacon commit.
           Required only when the caller is cognitum-one/website.
+          MUST cover BOTH repositories with contents:read and metadata:read.
+          A beacon-only token does not fail where you would expect: the Beacon
+          checkout succeeds, and the runtime proof then dies several minutes
+          later on a bare "gh: Not Found (HTTP 404)" from
+          `gh api repos/cognitum-one/website`, with nothing naming the token.
         required: false
 
 permissions:
@@ -249,11 +254,33 @@ jobs:
           print(sha)
           PY
           )"
-          gh repo clone cognitum-one/beacon "$BEACON_ROOT" -- \
-            --filter=blob:none --no-checkout
+          # `gh repo clone` authenticates the CLONE through gh's own credential
+          # path but leaves a plain https remote behind, so the `git fetch` on
+          # the next line ran with NO credentials and died on
+          #   fatal: could not read Username for 'https://github.com'
+          # Latent since this step was written: no caller has ever supplied
+          # static_ui_beacon_read_token, so the path had never run to completion
+          # and the gap could not surface. Verified by supplying a real token.
+          #
+          # Cloning directly with the credential in the URL fixes it — the fetch
+          # inherits it from the remote — and drops a `gh` dependency from a step
+          # that only ever needed git. The remote is removed immediately after so
+          # the token is not left in .git/config for the rest of the job.
+          git clone --filter=blob:none --no-checkout \
+            "https://x-access-token:${GH_TOKEN}@github.com/cognitum-one/beacon.git" \
+            "$BEACON_ROOT"
           git -C "$BEACON_ROOT" fetch --depth=1 origin "$BEACON_SHA"
           git -C "$BEACON_ROOT" checkout --detach "$BEACON_SHA"
           test "$(git -C "$BEACON_ROOT" rev-parse HEAD)" = "$BEACON_SHA"
+          git -C "$BEACON_ROOT" remote remove origin
+          # Prove the credential is gone rather than assuming the remove worked.
+          # Written as an if, not `! grep -q …`: under `set -e` a negated command
+          # is exempt from errexit, so the terser form would have been a check
+          # that could never fail (SC2251).
+          if grep -q 'x-access-token' "$BEACON_ROOT/.git/config"; then
+            echo "::error::The Beacon read token survived remote removal and is still on disk."
+            exit 1
+          fi
           echo "root=$BEACON_ROOT" >> "$GITHUB_OUTPUT"
 
       - name: Build and verify the committed static-UI runtime
