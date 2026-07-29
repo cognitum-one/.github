@@ -10,6 +10,18 @@ on:
   pull_request:
   schedule:
     - cron: "0 6 * * 1" # Mondays 06:00 UTC — weekly drift sweep
+
+permissions:
+  contents: read
+
 jobs:
   scan:
-    uses: cognitum-one/.github/.github/workflows/security-scan.yml@main
+    permissions:
+      contents: read
+    # PR2 bootstrap: replace this fail-closed zero ref with the reviewed PR2
+    # content commit before merging the final pin-only commit.
+    uses: cognitum-one/.github/.github/workflows/security-scan.yml@0000000000000000000000000000000000000000
+    # Required only for cognitum-one/website. Other repositories may omit the
+    # mapping; the shared workflow never receives unrelated repository secrets.
+    secrets:
+      static_ui_beacon_read_token: ${{ secrets.STATIC_UI_BEACON_READ_TOKEN }}

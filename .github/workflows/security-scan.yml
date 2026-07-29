@@ -24,6 +24,12 @@ name: security-scan
 
 on:
   workflow_call:
+    secrets:
+      static_ui_beacon_read_token:
+        description: >-
+          Read-only token for the exact private cognitum-one/beacon commit.
+          Required only when the caller is cognitum-one/website.
+        required: false
 
 permissions:
   contents: read
@@ -35,12 +41,15 @@ env:
   GITLEAKS_CONFIG_SHA256: "5018f890f807791f06b3f3e49c543dde8bb96dae7f984d74437ec57cc8f75e8e"
   OSV_VERSION: "2.2.4"
   OSV_LINUX_AMD64_SHA256: "7702cd1e5d9f5059dd9570f4ad967f27d3c5f5391b371ec937b384c238177f55"
-  OSV_POLICY_COMMIT: "85d9c27c285c4ead31fef6a1728dc867ed1d7cf9"
-  OSV_GATE_SHA256: "2bd6f306fbc3421179b04cced437632ba1d47c058774c3d89ce68ed246e8d187"
-  OSV_GATE_TEST_SHA256: "98161e89615f70a29b2d29e9d4a6992dfb6453ef60d5cb1c17e846e80f860983"
-  OSV_CONFIG_SHA256: "5b4932b938347c153c5fac2a6307c0ba3450ef183be5784ec3f6d532f7535c1f"
-  OSV_RUNNER_SHA256: "de3929022c8b6fabdba51504310ef65faa88057b227bd6fbe0d7a9caf3d5eb17"
-  OSV_RUNNER_TEST_SHA256: "1631c93f8f356170e0227bd0336dc2fb1bc2fadc58579d9b7639ad6b315edaf6"
+  OSV_POLICY_COMMIT: "16eb59995aa7378380c9b471ecd164cef42f8a87"
+  OSV_GATE_SHA256: "a3e29809c90b583f659e7a6f12c2febd3d9c1c193c82de8f2b5510132da5b0a9"
+  OSV_GATE_TEST_SHA256: "e6f51ee132093c1834358419d2d01ac23be920e2573409c68be13e1b45fa62ab"
+  OSV_CONFIG_SHA256: "5bd10fc47448111e6d8bed4682b9b80e4c420ca6cb0808a252b8c6d8cd920c34"
+  OSV_RUNNER_SHA256: "32ae0d4a9e3d1e461e91fc0fcbd9c3888928282bbd2371ab3ddfa9872ee409c1"
+  OSV_RUNNER_TEST_SHA256: "c76a51f8bfceda09dfaa92bd479ca67a7ad893ca570a79ec5d3d2fb71d2bafdb"
+  STATIC_UI_PROFILES_SHA256: "881e31395caf6c8b49552206d35e9c3727cec291ebdedc2e7635a1923252a9f0"
+  STATIC_UI_RECEIPT_SHA256: "f3f1108a3ea1332a1c315b1c1618a48cb2928ac7686d454f182f547ced083d76"
+  STATIC_UI_RECEIPT_TEST_SHA256: "eeb3b1c0fabfee62cace50fae531c55db4a050482bc14eec875e501aae335666"
 
 jobs:
   secrets:
@@ -122,10 +131,12 @@ jobs:
 
   deps:
     name: dependency scan (OSV, fail on High+ fixable)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
+          fetch-depth: 0
           persist-credentials: false
       - name: Fetch and self-test the immutable organization OSV gate
         run: |
@@ -145,13 +156,136 @@ jobs:
             "https://raw.githubusercontent.com/cognitum-one/.github/${OSV_POLICY_COMMIT}/security/run_osv_scan.py"
           curl --proto '=https' --tlsv1.2 -fsSLo "$POLICY_DIR/test_run_osv_scan.py" \
             "https://raw.githubusercontent.com/cognitum-one/.github/${OSV_POLICY_COMMIT}/security/test_run_osv_scan.py"
+          curl --proto '=https' --tlsv1.2 -fsSLo "$POLICY_DIR/static-ui-runtime-profiles.json" \
+            "https://raw.githubusercontent.com/cognitum-one/.github/${OSV_POLICY_COMMIT}/security/static-ui-runtime-profiles.json"
+          curl --proto '=https' --tlsv1.2 -fsSLo "$POLICY_DIR/static_ui_runtime_receipt.py" \
+            "https://raw.githubusercontent.com/cognitum-one/.github/${OSV_POLICY_COMMIT}/security/static_ui_runtime_receipt.py"
+          curl --proto '=https' --tlsv1.2 -fsSLo "$POLICY_DIR/test_static_ui_runtime_receipt.py" \
+            "https://raw.githubusercontent.com/cognitum-one/.github/${OSV_POLICY_COMMIT}/security/test_static_ui_runtime_receipt.py"
           echo "${OSV_GATE_SHA256}  ${POLICY_DIR}/osv_gate.py" | sha256sum -c -
           echo "${OSV_GATE_TEST_SHA256}  ${POLICY_DIR}/test_osv_gate.py" | sha256sum -c -
           echo "${OSV_CONFIG_SHA256}  ${POLICY_DIR}/osv-scanner.toml" | sha256sum -c -
           echo "${OSV_RUNNER_SHA256}  ${POLICY_DIR}/run_osv_scan.py" | sha256sum -c -
           echo "${OSV_RUNNER_TEST_SHA256}  ${POLICY_DIR}/test_run_osv_scan.py" | sha256sum -c -
+          echo "${STATIC_UI_PROFILES_SHA256}  ${POLICY_DIR}/static-ui-runtime-profiles.json" | sha256sum -c -
+          echo "${STATIC_UI_RECEIPT_SHA256}  ${POLICY_DIR}/static_ui_runtime_receipt.py" | sha256sum -c -
+          echo "${STATIC_UI_RECEIPT_TEST_SHA256}  ${POLICY_DIR}/test_static_ui_runtime_receipt.py" | sha256sum -c -
           python3 "$POLICY_DIR/test_osv_gate.py"
           python3 "$POLICY_DIR/test_run_osv_scan.py"
+          python3 "$POLICY_DIR/test_static_ui_runtime_receipt.py"
+
+      - name: Set up the trusted Docker builder
+        if: >-
+          ${{
+            github.repository == 'cognitum-one/website' ||
+            github.repository == 'cognitum-one/management'
+          }}
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+        with:
+          install: true
+
+      - name: Checkout the exact Beacon submodule source outside the candidate
+        id: beacon
+        if: ${{ github.repository == 'cognitum-one/website' }}
+        env:
+          GH_TOKEN: ${{ secrets.static_ui_beacon_read_token }}
+        run: |
+          set -euo pipefail
+          test -n "$GH_TOKEN" || {
+            echo "::error::The website runtime proof requires the scoped static_ui_beacon_read_token."
+            exit 1
+          }
+          POLICY_DIR="$RUNNER_TEMP/osv-policy"
+          BEACON_ROOT="$RUNNER_TEMP/static-ui-beacon"
+          test ! -e "$BEACON_ROOT"
+          BEACON_SHA="$(POLICY_DIR="$POLICY_DIR" python3 <<'PY'
+          import json
+          import os
+          import re
+          from pathlib import Path
+
+          policy = json.loads(
+              (Path(os.environ["POLICY_DIR"]) / "static-ui-runtime-profiles.json")
+              .read_text(encoding="utf-8")
+          )
+          sha = policy["profiles"]["cognitum-one/website"]["submodules"]["beacon"]["commitSha"]
+          if not isinstance(sha, str) or not re.fullmatch(r"[0-9a-f]{40}", sha):
+              raise SystemExit("invalid immutable Beacon commit in organization policy")
+          print(sha)
+          PY
+          )"
+          gh repo clone cognitum-one/beacon "$BEACON_ROOT" -- \
+            --filter=blob:none --no-checkout
+          git -C "$BEACON_ROOT" fetch --depth=1 origin "$BEACON_SHA"
+          git -C "$BEACON_ROOT" checkout --detach "$BEACON_SHA"
+          test "$(git -C "$BEACON_ROOT" rev-parse HEAD)" = "$BEACON_SHA"
+          echo "root=$BEACON_ROOT" >> "$GITHUB_OUTPUT"
+
+      - name: Build and verify the committed static-UI runtime
+        id: runtime
+        if: >-
+          ${{
+            github.repository == 'cognitum-one/website' ||
+            github.repository == 'cognitum-one/management'
+          }}
+        env:
+          BEACON_ROOT: ${{ steps.beacon.outputs.root }}
+          REPOSITORY_VISIBILITY: ${{ github.event.repository.visibility }}
+        run: |
+          set -euo pipefail
+          test "$REPOSITORY_VISIBILITY" = "private"
+          POLICY_DIR="$RUNNER_TEMP/osv-policy"
+          NONCE_DIR="$RUNNER_TEMP/static-ui-runtime-nonce"
+          OUTPUT_DIR="$RUNNER_TEMP/static-ui-runtime-evidence"
+          install -d -m 0700 "$NONCE_DIR"
+          umask 077
+          openssl rand -hex 32 > "$NONCE_DIR/nonce"
+          chmod 0600 "$NONCE_DIR/nonce"
+          IMAGE_TAG="cognitum-static-ui/${GITHUB_REPOSITORY#*/}:${GITHUB_SHA}"
+          arguments=(
+            --policy "$POLICY_DIR/static-ui-runtime-profiles.json"
+            build
+            --repository "$GITHUB_REPOSITORY"
+            --repository-root "$GITHUB_WORKSPACE"
+            --source-sha "$GITHUB_SHA"
+            --output-directory "$OUTPUT_DIR"
+            --image-tag "$IMAGE_TAG"
+            --receipt-nonce-file "$NONCE_DIR/nonce"
+            --mode premerge
+          )
+          if [ "$GITHUB_REPOSITORY" = "cognitum-one/website" ]; then
+            test -n "$BEACON_ROOT"
+            arguments+=(--beacon-repository-root "$BEACON_ROOT")
+          fi
+          GITHUB_REPOSITORY_VISIBILITY="$REPOSITORY_VISIBILITY" \
+            python3 "$POLICY_DIR/static_ui_runtime_receipt.py" "${arguments[@]}"
+          rm -f -- "$OUTPUT_DIR/management-vite.env"
+          IMAGE_ID="$(tr -d '\r\n' < "$OUTPUT_DIR/image-id.txt")"
+          IMAGE_NAME="$(OUTPUT_DIR="$OUTPUT_DIR" python3 <<'PY'
+          import json
+          import os
+          import re
+          from pathlib import Path
+
+          receipt = json.loads(
+              (Path(os.environ["OUTPUT_DIR"]) / "static-ui-runtime-receipt.json")
+              .read_text(encoding="utf-8")
+          )
+          name = receipt["subject"]["name"]
+          if not isinstance(name, str) or not re.fullmatch(r"[a-z0-9./_-]+", name):
+              raise SystemExit("invalid receipt image name")
+          print(name)
+          PY
+          )"
+          [[ "$IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ ]]
+          {
+            echo "receipt=$OUTPUT_DIR/static-ui-runtime-receipt.json"
+            echo "inventory=$OUTPUT_DIR/rootfs-inventory.json"
+            echo "nonce=$NONCE_DIR/nonce"
+            echo "image_name=$IMAGE_NAME"
+            echo "image_id=$IMAGE_ID"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Run OSV-Scanner
         run: |
           set -euo pipefail
@@ -174,4 +308,16 @@ jobs:
           # independently pinned organization policy; every other finding blocks.
           OSV_REPORT="$OSV_REPORT" \
           OSV_REPOSITORY_ROOT="$GITHUB_WORKSPACE" \
+          OSV_RUNTIME_RECEIPT="${{ steps.runtime.outputs.receipt }}" \
+          OSV_RUNTIME_INVENTORY="${{ steps.runtime.outputs.inventory }}" \
+          OSV_RUNTIME_NONCE="${{ steps.runtime.outputs.nonce }}" \
+          OSV_RUNTIME_IMAGE_NAME="${{ steps.runtime.outputs.image_name }}" \
+          OSV_RUNTIME_IMAGE_ID="${{ steps.runtime.outputs.image_id }}" \
+          GITHUB_REPOSITORY="$GITHUB_REPOSITORY" \
+          GITHUB_SHA="$GITHUB_SHA" \
+          GITHUB_RUN_ID="$GITHUB_RUN_ID" \
+          GITHUB_RUN_ATTEMPT="$GITHUB_RUN_ATTEMPT" \
+          GITHUB_JOB="$GITHUB_JOB" \
+          GITHUB_WORKFLOW_REF="$GITHUB_WORKFLOW_REF" \
+          GITHUB_WORKFLOW_SHA="$GITHUB_WORKFLOW_SHA" \
             python3 "$POLICY_DIR/osv_gate.py"

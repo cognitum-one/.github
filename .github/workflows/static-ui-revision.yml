@@ -1,0 +1,252 @@
+name: verify-static-ui-revision
+
+# Read-only post-deployment verifier. The caller must make its deploy/promotion
+# job depend on trusted-static-ui-release first; this workflow then proves the
+# exact Ready revision, image digest, runtime identity, spec/environment,
+# ingress, empty volume/mount set, and singular 100% traffic allocation.
+
+on:
+  workflow_call:
+    inputs:
+      expected_image:
+        description: Exact Artifact Registry image in name@sha256:digest form.
+        required: true
+        type: string
+      expected_revision:
+        description: Exact immutable Cloud Run revision name.
+        required: true
+        type: string
+      expected_spec_digest:
+        description: Canonical digest captured from the no-traffic candidate revision.
+        required: true
+        type: string
+      expected_environment_json:
+        description: >-
+          Sorted exact environment evidence array generated from the
+          pre-deployment spec (literal value digests or numeric secret refs).
+        required: true
+        type: string
+    secrets:
+      static_ui_verifier_wif_provider:
+        description: Read-only staging WIF provider for Cloud Run describe.
+        required: true
+      static_ui_verifier_service_account:
+        description: Dedicated read-only release-verifier service account.
+        required: true
+    outputs:
+      evidence_artifact:
+        description: Uploaded immutable revision evidence artifact name.
+        value: ${{ jobs.verify_revision.outputs.evidence_artifact }}
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  OSV_POLICY_COMMIT: "16eb59995aa7378380c9b471ecd164cef42f8a87"
+  STATIC_UI_PROFILES_SHA256: "881e31395caf6c8b49552206d35e9c3727cec291ebdedc2e7635a1923252a9f0"
+  STATIC_UI_RECEIPT_SHA256: "f3f1108a3ea1332a1c315b1c1618a48cb2928ac7686d454f182f547ced083d76"
+  STATIC_UI_WORKFLOW_COMMIT: "0000000000000000000000000000000000000000"
+  STATIC_UI_RELEASE_GATE_SHA256: "bfe974d10883013f843c59a2f025f0c6b7d64f4f18bc7edb2e66b650fb30b7a8"
+  GCP_PROJECT: "cognitum-20260110"
+  GCP_REGION: "us-central1"
+
+jobs:
+  verify_revision:
+    name: verify exact Ready revision and service traffic
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: staging
+    outputs:
+      evidence_artifact: ${{ steps.evidence_name.outputs.name }}
+    steps:
+      - name: Require protected current-main caller context
+        env:
+          SOURCE_REF: ${{ github.ref }}
+          SOURCE_SHA: ${{ github.sha }}
+          WORKFLOW_REF: ${{ github.workflow_ref }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+          WIF_PROVIDER: ${{ secrets.static_ui_verifier_wif_provider }}
+          VERIFIER_SERVICE_ACCOUNT: ${{ secrets.static_ui_verifier_service_account }}
+        run: |
+          set -euo pipefail
+          case "$GITHUB_REPOSITORY" in
+            cognitum-one/website)
+              EXPECTED_WIF_PROVIDER="projects/186366152200/locations/global/workloadIdentityPools/github-website-frontend-stg/providers/github-main"
+              EXPECTED_VERIFIER_SERVICE_ACCOUNT="website-release-verify-stg@cognitum-20260110.iam.gserviceaccount.com"
+              ;;
+            cognitum-one/management)
+              EXPECTED_WIF_PROVIDER="projects/186366152200/locations/global/workloadIdentityPools/github-management-stg/providers/github-main"
+              EXPECTED_VERIFIER_SERVICE_ACCOUNT="management-ui-release-verify-stg@cognitum-20260110.iam.gserviceaccount.com"
+              ;;
+            *) echo "::error::Repository is not approved."; exit 1 ;;
+          esac
+          test "$WIF_PROVIDER" = "$EXPECTED_WIF_PROVIDER"
+          test "$VERIFIER_SERVICE_ACCOUNT" = "$EXPECTED_VERIFIER_SERVICE_ACCOUNT"
+          test "$SOURCE_REF" = "refs/heads/main"
+          test "$WORKFLOW_SHA" = "$SOURCE_SHA"
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$WORKFLOW_REF" == "$GITHUB_REPOSITORY/.github/workflows/cd.yml@refs/heads/main" ]]
+          test "$STATIC_UI_WORKFLOW_COMMIT" != "0000000000000000000000000000000000000000" || {
+            echo "::error::PR2 self-pin is unresolved; revision verification is frozen."
+            exit 1
+          }
+
+      - name: Fetch immutable revision gates
+        run: |
+          set -euo pipefail
+          POLICY_DIR="$RUNNER_TEMP/static-ui-policy"
+          install -d -m 0700 "$POLICY_DIR"
+          policy_base="https://raw.githubusercontent.com/cognitum-one/.github/${OSV_POLICY_COMMIT}/security"
+          release_base="https://raw.githubusercontent.com/cognitum-one/.github/${STATIC_UI_WORKFLOW_COMMIT}/security"
+          curl --proto '=https' --tlsv1.2 -fsSLo "$POLICY_DIR/static-ui-runtime-profiles.json" \
+            "$policy_base/static-ui-runtime-profiles.json"
+          curl --proto '=https' --tlsv1.2 -fsSLo "$POLICY_DIR/static_ui_runtime_receipt.py" \
+            "$policy_base/static_ui_runtime_receipt.py"
+          curl --proto '=https' --tlsv1.2 -fsSLo "$POLICY_DIR/static_ui_release_gate.py" \
+            "$release_base/static_ui_release_gate.py"
+          echo "${STATIC_UI_PROFILES_SHA256}  ${POLICY_DIR}/static-ui-runtime-profiles.json" | sha256sum -c -
+          echo "${STATIC_UI_RECEIPT_SHA256}  ${POLICY_DIR}/static_ui_runtime_receipt.py" | sha256sum -c -
+          echo "${STATIC_UI_RELEASE_GATE_SHA256}  ${POLICY_DIR}/static_ui_release_gate.py" | sha256sum -c -
+
+      - name: Resolve the organization-owned staging target
+        id: target
+        env:
+          EXPECTED_IMAGE: ${{ inputs.expected_image }}
+          EXPECTED_REVISION: ${{ inputs.expected_revision }}
+          EXPECTED_SPEC_DIGEST: ${{ inputs.expected_spec_digest }}
+          EXPECTED_ENVIRONMENT_JSON: ${{ inputs.expected_environment_json }}
+        run: |
+          set -euo pipefail
+          POLICY_DIR="$RUNNER_TEMP/static-ui-policy"
+          EVIDENCE_DIR="$RUNNER_TEMP/static-ui-revision-evidence"
+          install -d -m 0700 "$EVIDENCE_DIR"
+          case "$GITHUB_REPOSITORY" in
+            cognitum-one/website)
+              SERVICE="cognitum-dashboard-staging"
+              SERVICE_ACCOUNT="website-runtime-stg@cognitum-20260110.iam.gserviceaccount.com"
+              INGRESS="all"
+              ;;
+            cognitum-one/management)
+              SERVICE="cognitum-manage-staging"
+              SERVICE_ACCOUNT="management-runtime-stg@cognitum-20260110.iam.gserviceaccount.com"
+              INGRESS="internal-and-cloud-load-balancing"
+              ;;
+          esac
+          POLICY_DIR="$POLICY_DIR" EVIDENCE_DIR="$EVIDENCE_DIR" \
+            SERVICE="$SERVICE" SERVICE_ACCOUNT="$SERVICE_ACCOUNT" INGRESS="$INGRESS" \
+            python3 <<'PY'
+          import json
+          import os
+          import re
+          import sys
+          from pathlib import Path
+
+          sys.path.insert(0, os.environ["POLICY_DIR"])
+          from static_ui_release_gate import _strict_json_loads, _write_json
+
+          image = os.environ["EXPECTED_IMAGE"]
+          revision = os.environ["EXPECTED_REVISION"]
+          spec_digest = os.environ["EXPECTED_SPEC_DIGEST"]
+          if not re.fullmatch(r"[a-z0-9./_-]+@sha256:[0-9a-f]{64}", image):
+              raise SystemExit("expected image is not an immutable Artifact Registry digest")
+          if not re.fullmatch(r"[a-z][a-z0-9-]{0,62}", revision):
+              raise SystemExit("expected Cloud Run revision is malformed")
+          if not re.fullmatch(r"sha256:[0-9a-f]{64}", spec_digest):
+              raise SystemExit("expected revision spec digest is malformed")
+          policy = _strict_json_loads(
+              (Path(os.environ["POLICY_DIR"]) / "static-ui-runtime-profiles.json")
+              .read_text(encoding="utf-8")
+          )
+          image_name = image.rsplit("@", 1)[0]
+          expected_name = policy["profiles"][os.environ["GITHUB_REPOSITORY"]]["release"]["registryRepository"]
+          if image_name != expected_name:
+              raise SystemExit("expected image repository differs from organization policy")
+          environment = _strict_json_loads(os.environ["EXPECTED_ENVIRONMENT_JSON"])
+          _write_json(
+              Path(os.environ["EVIDENCE_DIR"]) / "expected-environment.json",
+              environment,
+          )
+          PY
+          {
+            echo "service=$SERVICE"
+            echo "service_account=$SERVICE_ACCOUNT"
+            echo "ingress=$INGRESS"
+            echo "evidence_dir=$EVIDENCE_DIR"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Authenticate the dedicated read-only verifier
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093
+        with:
+          workload_identity_provider: ${{ secrets.static_ui_verifier_wif_provider }}
+          service_account: ${{ secrets.static_ui_verifier_service_account }}
+          create_credentials_file: true
+          export_environment_variables: true
+
+      - name: Set up the Google Cloud SDK
+        uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db
+
+      - name: Read the exact revision and service
+        env:
+          REVISION: ${{ inputs.expected_revision }}
+          SERVICE: ${{ steps.target.outputs.service }}
+          EVIDENCE_DIR: ${{ steps.target.outputs.evidence_dir }}
+        run: |
+          set -euo pipefail
+          test ! -e "$EVIDENCE_DIR/revision.json"
+          test ! -e "$EVIDENCE_DIR/service.json"
+          gcloud run revisions describe "$REVISION" \
+            --project "$GCP_PROJECT" \
+            --region "$GCP_REGION" \
+            --format=json > "$EVIDENCE_DIR/revision.json"
+          gcloud run services describe "$SERVICE" \
+            --project "$GCP_PROJECT" \
+            --region "$GCP_REGION" \
+            --format=json > "$EVIDENCE_DIR/service.json"
+          chmod 0600 "$EVIDENCE_DIR/revision.json" "$EVIDENCE_DIR/service.json"
+
+      - name: Verify revision, service, environment, ingress, and traffic
+        env:
+          IMAGE: ${{ inputs.expected_image }}
+          REVISION: ${{ inputs.expected_revision }}
+          SPEC_DIGEST: ${{ inputs.expected_spec_digest }}
+          SERVICE: ${{ steps.target.outputs.service }}
+          SERVICE_ACCOUNT: ${{ steps.target.outputs.service_account }}
+          INGRESS: ${{ steps.target.outputs.ingress }}
+          EVIDENCE_DIR: ${{ steps.target.outputs.evidence_dir }}
+        run: |
+          set -euo pipefail
+          POLICY_DIR="$RUNNER_TEMP/static-ui-policy"
+          python3 "$POLICY_DIR/static_ui_release_gate.py" service \
+            --repository "$GITHUB_REPOSITORY" \
+            --policy "$POLICY_DIR/static-ui-runtime-profiles.json" \
+            --revision "$EVIDENCE_DIR/revision.json" \
+            --service-document "$EVIDENCE_DIR/service.json" \
+            --expected-environment "$EVIDENCE_DIR/expected-environment.json" \
+            --expected-revision "$REVISION" \
+            --expected-service "$SERVICE" \
+            --expected-image "$IMAGE" \
+            --expected-service-account "$SERVICE_ACCOUNT" \
+            --expected-spec-digest "$SPEC_DIGEST" \
+            --expected-ingress "$INGRESS" \
+            --output "$EVIDENCE_DIR/verified-cloud-run-release.json"
+
+      - name: Upload immutable revision evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: static-ui-revision-${{ github.event.repository.name }}-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            ${{ steps.target.outputs.evidence_dir }}/expected-environment.json
+            ${{ steps.target.outputs.evidence_dir }}/revision.json
+            ${{ steps.target.outputs.evidence_dir }}/service.json
+            ${{ steps.target.outputs.evidence_dir }}/verified-cloud-run-release.json
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+          overwrite: false
+
+      - name: Export evidence artifact name
+        id: evidence_name
+        env:
+          NAME: static-ui-revision-${{ github.event.repository.name }}-${{ github.sha }}-${{ github.run_attempt }}
+        run: echo "name=$NAME" >> "$GITHUB_OUTPUT"

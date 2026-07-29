@@ -1,0 +1,473 @@
+name: trusted-static-ui-release
+
+# Organization-owned trusted builder for the two approved static browser UIs.
+# This workflow builds current main, pushes one exact digest, signs the custom
+# runtime receipt, and verifies the signer/subject/predicate before returning
+# evidence. It deliberately contains no Cloud Run deploy, traffic, IAM, billing,
+# Secret Manager mutation, or production-promotion command.
+
+on:
+  workflow_call:
+    secrets:
+      static_ui_release_wif_provider:
+        description: Exact staging WIF provider authorized for this reusable workflow.
+        required: true
+      static_ui_release_service_account:
+        description: Dedicated staging builder identity; never a runtime identity.
+        required: true
+      static_ui_beacon_read_token:
+        description: Read-only token for the exact private Beacon commit (website only).
+        required: false
+    outputs:
+      image_name:
+        description: Approved Artifact Registry repository without a tag.
+        value: ${{ jobs.staging.outputs.image_name }}
+      image_digest:
+        description: Exact pushed OCI manifest digest.
+        value: ${{ jobs.staging.outputs.image_digest }}
+      image:
+        description: Exact immutable image reference.
+        value: ${{ jobs.staging.outputs.image }}
+      receipt_digest:
+        description: Digest of the verified custom runtime receipt.
+        value: ${{ jobs.staging.outputs.receipt_digest }}
+      evidence_artifact:
+        description: Name of the uploaded signed release evidence artifact.
+        value: ${{ jobs.staging.outputs.evidence_artifact }}
+
+permissions:
+  attestations: write
+  contents: read
+  id-token: write
+
+concurrency:
+  group: trusted-static-ui-release-${{ github.repository }}
+  cancel-in-progress: false
+
+env:
+  # Finalized organization policy revision. Repin all eight hashes atomically.
+  OSV_POLICY_COMMIT: "16eb59995aa7378380c9b471ecd164cef42f8a87"
+  OSV_GATE_SHA256: "a3e29809c90b583f659e7a6f12c2febd3d9c1c193c82de8f2b5510132da5b0a9"
+  OSV_GATE_TEST_SHA256: "e6f51ee132093c1834358419d2d01ac23be920e2573409c68be13e1b45fa62ab"
+  OSV_CONFIG_SHA256: "5bd10fc47448111e6d8bed4682b9b80e4c420ca6cb0808a252b8c6d8cd920c34"
+  OSV_RUNNER_SHA256: "32ae0d4a9e3d1e461e91fc0fcbd9c3888928282bbd2371ab3ddfa9872ee409c1"
+  OSV_RUNNER_TEST_SHA256: "c76a51f8bfceda09dfaa92bd479ca67a7ad893ca570a79ec5d3d2fb71d2bafdb"
+  STATIC_UI_PROFILES_SHA256: "881e31395caf6c8b49552206d35e9c3727cec291ebdedc2e7635a1923252a9f0"
+  STATIC_UI_RECEIPT_SHA256: "f3f1108a3ea1332a1c315b1c1618a48cb2928ac7686d454f182f547ced083d76"
+  STATIC_UI_RECEIPT_TEST_SHA256: "eeb3b1c0fabfee62cace50fae531c55db4a050482bc14eec875e501aae335666"
+  # Two-commit bootstrap: replace with the first PR2 content commit, then commit
+  # only this pin/hash update. Zero is intentionally non-runnable/fail-closed.
+  STATIC_UI_WORKFLOW_COMMIT: "0000000000000000000000000000000000000000"
+  STATIC_UI_RELEASE_GATE_SHA256: "bfe974d10883013f843c59a2f025f0c6b7d64f4f18bc7edb2e66b650fb30b7a8"
+  STATIC_UI_RELEASE_GATE_TEST_SHA256: "9c92da34a9d7601cc6387aabcbb3084f9b43083ec54efc46b12e17cb7f029517"
+  STATIC_UI_PREDICATE_TYPE: "https://cognitum.one/attestations/static-ui-runtime/v1"
+  STATIC_UI_SIGNER_WORKFLOW: "cognitum-one/.github/.github/workflows/static-ui-release.yml"
+  AR_HOST: "us-central1-docker.pkg.dev"
+
+jobs:
+  staging:
+    name: build, attest, and verify staging image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    environment: staging
+    outputs:
+      image_name: ${{ steps.subject.outputs.image_name }}
+      image_digest: ${{ steps.subject.outputs.image_digest }}
+      image: ${{ steps.subject.outputs.image }}
+      receipt_digest: ${{ steps.subject.outputs.receipt_digest }}
+      evidence_artifact: ${{ steps.evidence_name.outputs.name }}
+    steps:
+      - name: Require the exact approved release context
+        env:
+          SOURCE_REF: ${{ github.ref }}
+          SOURCE_SHA: ${{ github.sha }}
+          WORKFLOW_REF: ${{ github.workflow_ref }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+          EVENT_NAME: ${{ github.event_name }}
+          WIF_PROVIDER: ${{ secrets.static_ui_release_wif_provider }}
+          BUILDER_SERVICE_ACCOUNT: ${{ secrets.static_ui_release_service_account }}
+        run: |
+          set -euo pipefail
+          case "$GITHUB_REPOSITORY" in
+            cognitum-one/website)
+              EXPECTED_WIF_PROVIDER="projects/186366152200/locations/global/workloadIdentityPools/github-website-frontend-stg/providers/github-main"
+              EXPECTED_BUILDER_SERVICE_ACCOUNT="website-frontend-deploy-stg@cognitum-20260110.iam.gserviceaccount.com"
+              ;;
+            cognitum-one/management)
+              EXPECTED_WIF_PROVIDER="projects/186366152200/locations/global/workloadIdentityPools/github-management-stg/providers/github-main"
+              EXPECTED_BUILDER_SERVICE_ACCOUNT="management-ui-deploy-stg@cognitum-20260110.iam.gserviceaccount.com"
+              ;;
+            *)
+              echo "::error::Repository is not in the approved static-UI policy."
+              exit 1
+              ;;
+          esac
+          test "$WIF_PROVIDER" = "$EXPECTED_WIF_PROVIDER"
+          test "$BUILDER_SERVICE_ACCOUNT" = "$EXPECTED_BUILDER_SERVICE_ACCOUNT"
+          test "$SOURCE_REF" = "refs/heads/main"
+          test "$WORKFLOW_SHA" = "$SOURCE_SHA"
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$WORKFLOW_REF" == "$GITHUB_REPOSITORY/.github/workflows/cd.yml@refs/heads/main" ]]
+          case "$EVENT_NAME" in
+            push|workflow_dispatch|workflow_run) ;;
+            *) echo "::error::Unapproved release event."; exit 1 ;;
+          esac
+          test "$STATIC_UI_WORKFLOW_COMMIT" != "0000000000000000000000000000000000000000" || {
+            echo "::error::PR2 self-pin is unresolved; trusted release is frozen."
+            exit 1
+          }
+
+      - name: Checkout current main without private submodules
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Fetch and directly test all immutable organization gates
+        run: |
+          set -euo pipefail
+          POLICY_DIR="$RUNNER_TEMP/static-ui-policy"
+          install -d -m 0700 "$POLICY_DIR"
+          base="https://raw.githubusercontent.com/cognitum-one/.github/${OSV_POLICY_COMMIT}/security"
+          curl --proto '=https' --tlsv1.2 -fsSLo "$POLICY_DIR/osv_gate.py" "$base/osv_gate.py"
+          curl --proto '=https' --tlsv1.2 -fsSLo "$POLICY_DIR/test_osv_gate.py" "$base/test_osv_gate.py"
+          curl --proto '=https' --tlsv1.2 -fsSLo "$POLICY_DIR/osv-scanner.toml" "$base/osv-scanner.toml"
+          curl --proto '=https' --tlsv1.2 -fsSLo "$POLICY_DIR/run_osv_scan.py" "$base/run_osv_scan.py"
+          curl --proto '=https' --tlsv1.2 -fsSLo "$POLICY_DIR/test_run_osv_scan.py" "$base/test_run_osv_scan.py"
+          curl --proto '=https' --tlsv1.2 -fsSLo "$POLICY_DIR/static-ui-runtime-profiles.json" "$base/static-ui-runtime-profiles.json"
+          curl --proto '=https' --tlsv1.2 -fsSLo "$POLICY_DIR/static_ui_runtime_receipt.py" "$base/static_ui_runtime_receipt.py"
+          curl --proto '=https' --tlsv1.2 -fsSLo "$POLICY_DIR/test_static_ui_runtime_receipt.py" "$base/test_static_ui_runtime_receipt.py"
+          release_base="https://raw.githubusercontent.com/cognitum-one/.github/${STATIC_UI_WORKFLOW_COMMIT}/security"
+          curl --proto '=https' --tlsv1.2 -fsSLo "$POLICY_DIR/static_ui_release_gate.py" "$release_base/static_ui_release_gate.py"
+          curl --proto '=https' --tlsv1.2 -fsSLo "$POLICY_DIR/test_static_ui_release_gate.py" "$release_base/test_static_ui_release_gate.py"
+          echo "${OSV_GATE_SHA256}  ${POLICY_DIR}/osv_gate.py" | sha256sum -c -
+          echo "${OSV_GATE_TEST_SHA256}  ${POLICY_DIR}/test_osv_gate.py" | sha256sum -c -
+          echo "${OSV_CONFIG_SHA256}  ${POLICY_DIR}/osv-scanner.toml" | sha256sum -c -
+          echo "${OSV_RUNNER_SHA256}  ${POLICY_DIR}/run_osv_scan.py" | sha256sum -c -
+          echo "${OSV_RUNNER_TEST_SHA256}  ${POLICY_DIR}/test_run_osv_scan.py" | sha256sum -c -
+          echo "${STATIC_UI_PROFILES_SHA256}  ${POLICY_DIR}/static-ui-runtime-profiles.json" | sha256sum -c -
+          echo "${STATIC_UI_RECEIPT_SHA256}  ${POLICY_DIR}/static_ui_runtime_receipt.py" | sha256sum -c -
+          echo "${STATIC_UI_RECEIPT_TEST_SHA256}  ${POLICY_DIR}/test_static_ui_runtime_receipt.py" | sha256sum -c -
+          echo "${STATIC_UI_RELEASE_GATE_SHA256}  ${POLICY_DIR}/static_ui_release_gate.py" | sha256sum -c -
+          echo "${STATIC_UI_RELEASE_GATE_TEST_SHA256}  ${POLICY_DIR}/test_static_ui_release_gate.py" | sha256sum -c -
+          python3 "$POLICY_DIR/test_osv_gate.py"
+          python3 "$POLICY_DIR/test_run_osv_scan.py"
+          python3 "$POLICY_DIR/test_static_ui_runtime_receipt.py"
+          python3 "$POLICY_DIR/test_static_ui_release_gate.py"
+
+      - name: Checkout the exact Beacon submodule source outside the candidate
+        id: beacon
+        if: ${{ github.repository == 'cognitum-one/website' }}
+        env:
+          GH_TOKEN: ${{ secrets.static_ui_beacon_read_token }}
+        run: |
+          set -euo pipefail
+          test -n "$GH_TOKEN"
+          POLICY_DIR="$RUNNER_TEMP/static-ui-policy"
+          BEACON_ROOT="$RUNNER_TEMP/static-ui-beacon"
+          test ! -e "$BEACON_ROOT"
+          BEACON_SHA="$(POLICY_DIR="$POLICY_DIR" python3 <<'PY'
+          import json
+          import os
+          import re
+          from pathlib import Path
+
+          policy = json.loads(
+              (Path(os.environ["POLICY_DIR"]) / "static-ui-runtime-profiles.json")
+              .read_text(encoding="utf-8")
+          )
+          sha = policy["profiles"]["cognitum-one/website"]["submodules"]["beacon"]["commitSha"]
+          if not isinstance(sha, str) or not re.fullmatch(r"[0-9a-f]{40}", sha):
+              raise SystemExit("invalid immutable Beacon commit in organization policy")
+          print(sha)
+          PY
+          )"
+          gh repo clone cognitum-one/beacon "$BEACON_ROOT" -- \
+            --filter=blob:none --no-checkout
+          git -C "$BEACON_ROOT" fetch --depth=1 origin "$BEACON_SHA"
+          git -C "$BEACON_ROOT" checkout --detach "$BEACON_SHA"
+          test "$(git -C "$BEACON_ROOT" rev-parse HEAD)" = "$BEACON_SHA"
+          echo "root=$BEACON_ROOT" >> "$GITHUB_OUTPUT"
+
+      - name: Authenticate the dedicated staging builder
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093
+        with:
+          workload_identity_provider: ${{ secrets.static_ui_release_wif_provider }}
+          service_account: ${{ secrets.static_ui_release_service_account }}
+          create_credentials_file: true
+          export_environment_variables: true
+
+      - name: Set up the Google Cloud SDK
+        uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db
+
+      - name: Authenticate Docker only to the approved Artifact Registry host
+        run: |
+          set -euo pipefail
+          gcloud auth configure-docker "$AR_HOST" --quiet
+
+      - name: Set up the trusted Docker builder
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+        with:
+          install: true
+
+      - name: Create the external release nonce and exact image tag
+        id: release_inputs
+        run: |
+          set -euo pipefail
+          POLICY_DIR="$RUNNER_TEMP/static-ui-policy"
+          NONCE_DIR="$RUNNER_TEMP/static-ui-release-nonce"
+          install -d -m 0700 "$NONCE_DIR"
+          umask 077
+          openssl rand -hex 32 > "$NONCE_DIR/nonce"
+          chmod 0600 "$NONCE_DIR/nonce"
+          IMAGE_NAME="$(POLICY_DIR="$POLICY_DIR" python3 <<'PY'
+          import json
+          import os
+          import re
+          from pathlib import Path
+
+          policy = json.loads(
+              (Path(os.environ["POLICY_DIR"]) / "static-ui-runtime-profiles.json")
+              .read_text(encoding="utf-8")
+          )
+          name = policy["profiles"][os.environ["GITHUB_REPOSITORY"]]["release"]["registryRepository"]
+          if not isinstance(name, str) or not re.fullmatch(r"[a-z0-9./_-]+", name):
+              raise SystemExit("invalid approved registry repository")
+          print(name)
+          PY
+          )"
+          test "${IMAGE_NAME%%/*}" = "$AR_HOST"
+          {
+            echo "nonce=$NONCE_DIR/nonce"
+            echo "image_name=$IMAGE_NAME"
+            echo "image_tag=$IMAGE_NAME:$GITHUB_SHA"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build and push current main with the exact org grammar
+        id: build
+        env:
+          BEACON_ROOT: ${{ steps.beacon.outputs.root }}
+          IMAGE_TAG: ${{ steps.release_inputs.outputs.image_tag }}
+          NONCE: ${{ steps.release_inputs.outputs.nonce }}
+          REPOSITORY_VISIBILITY: ${{ github.event.repository.visibility }}
+        run: |
+          set -euo pipefail
+          test "$REPOSITORY_VISIBILITY" = "private"
+          POLICY_DIR="$RUNNER_TEMP/static-ui-policy"
+          OUTPUT_DIR="$RUNNER_TEMP/static-ui-release-evidence"
+          arguments=(
+            --policy "$POLICY_DIR/static-ui-runtime-profiles.json"
+            build
+            --repository "$GITHUB_REPOSITORY"
+            --repository-root "$GITHUB_WORKSPACE"
+            --source-sha "$GITHUB_SHA"
+            --output-directory "$OUTPUT_DIR"
+            --image-tag "$IMAGE_TAG"
+            --receipt-nonce-file "$NONCE"
+            --mode release
+          )
+          if [ "$GITHUB_REPOSITORY" = "cognitum-one/website" ]; then
+            test -n "$BEACON_ROOT"
+            arguments+=(--beacon-repository-root "$BEACON_ROOT")
+          fi
+          GITHUB_REPOSITORY_VISIBILITY="$REPOSITORY_VISIBILITY" \
+            python3 "$POLICY_DIR/static_ui_runtime_receipt.py" "${arguments[@]}"
+          rm -f -- "$OUTPUT_DIR/management-vite.env"
+          echo "output=$OUTPUT_DIR" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve and validate the exact pushed subject
+        id: subject
+        env:
+          IMAGE_NAME: ${{ steps.release_inputs.outputs.image_name }}
+          OUTPUT_DIR: ${{ steps.build.outputs.output }}
+        run: |
+          set -euo pipefail
+          eval "$(python3 <<'PY'
+          import json
+          import os
+          import re
+          import shlex
+          from pathlib import Path
+
+          root = Path(os.environ["OUTPUT_DIR"])
+          receipt = json.loads((root / "static-ui-runtime-receipt.json").read_text())
+          image_name = os.environ["IMAGE_NAME"]
+          digest = receipt["image"]["registryDigest"]
+          image_id = receipt["image"]["configAndRootfs"]["imageId"]
+          receipt_digest = receipt["receiptDigest"]
+          values = (digest, image_id, receipt_digest)
+          if not all(isinstance(value, str) and re.fullmatch(r"sha256:[0-9a-f]{64}", value) for value in values):
+              raise SystemExit("release receipt digest tuple is malformed")
+          if receipt["subject"]["name"] != image_name or receipt["subject"]["digest"]["sha256"] != digest.removeprefix("sha256:"):
+              raise SystemExit("release receipt subject differs")
+          for key, value in (
+              ("IMAGE_DIGEST", digest),
+              ("IMAGE_ID", image_id),
+              ("RECEIPT_DIGEST", receipt_digest),
+          ):
+              print(f"{key}={shlex.quote(value)}")
+          PY
+          )"
+          {
+            echo "image_name=$IMAGE_NAME"
+            echo "image_digest=$IMAGE_DIGEST"
+            echo "image=$IMAGE_NAME@$IMAGE_DIGEST"
+            echo "image_id=$IMAGE_ID"
+            echo "receipt_digest=$RECEIPT_DIGEST"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Re-inventory the exact pushed OCI digest
+        env:
+          IMAGE_NAME: ${{ steps.subject.outputs.image_name }}
+          IMAGE_DIGEST: ${{ steps.subject.outputs.image_digest }}
+          IMAGE_ID: ${{ steps.subject.outputs.image_id }}
+          OUTPUT_DIR: ${{ steps.build.outputs.output }}
+        run: |
+          set -euo pipefail
+          POLICY_DIR="$RUNNER_TEMP/static-ui-policy"
+          python3 "$POLICY_DIR/static_ui_release_gate.py" inventory \
+            --repository "$GITHUB_REPOSITORY" \
+            --policy "$POLICY_DIR/static-ui-runtime-profiles.json" \
+            --image-name "$IMAGE_NAME" \
+            --image-digest "$IMAGE_DIGEST" \
+            --expected-image-id "$IMAGE_ID" \
+            --expected-inventory "$OUTPUT_DIR/rootfs-inventory.json" \
+            --output "$OUTPUT_DIR/exact-digest-rootfs-inventory.json"
+
+      - name: Resolve the immutable reusable-workflow signer digest
+        id: signer
+        env:
+          EXPECTED_SIGNER_WORKFLOW: ${{ env.STATIC_UI_SIGNER_WORKFLOW }}
+          REPOSITORY_VISIBILITY: ${{ github.event.repository.visibility }}
+        run: |
+          set -euo pipefail
+          RESPONSE="$RUNNER_TEMP/static-ui-job-oidc.json"
+          curl --proto '=https' --tlsv1.2 -fsS \
+            -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=https%3A%2F%2Fcognitum.one%2Fstatic-ui-release" \
+            > "$RESPONSE"
+          chmod 0600 "$RESPONSE"
+          RESPONSE="$RESPONSE" python3 <<'PY' >> "$GITHUB_OUTPUT"
+          import base64
+          import json
+          import os
+          import re
+          from pathlib import Path
+
+          response = json.loads(Path(os.environ["RESPONSE"]).read_text())
+          token = response.get("value")
+          if not isinstance(token, str) or token.count(".") != 2:
+              raise SystemExit("OIDC response does not contain one JWT")
+          payload_source = token.split(".")[1]
+          payload_source += "=" * (-len(payload_source) % 4)
+          payload = json.loads(base64.urlsafe_b64decode(payload_source))
+          expected_workflow = os.environ["EXPECTED_SIGNER_WORKFLOW"]
+          workflow_ref = payload.get("job_workflow_ref")
+          workflow_sha = payload.get("job_workflow_sha")
+          if (
+              payload.get("iss") != "https://token.actions.githubusercontent.com"
+              or payload.get("aud") != "https://cognitum.one/static-ui-release"
+              or payload.get("repository") != os.environ["GITHUB_REPOSITORY"]
+              or payload.get("repository_id") != os.environ["GITHUB_REPOSITORY_ID"]
+              or payload.get("repository_owner_id")
+              != os.environ["GITHUB_REPOSITORY_OWNER_ID"]
+              or payload.get("repository_visibility")
+              != os.environ["REPOSITORY_VISIBILITY"]
+              or payload.get("run_id") != os.environ["GITHUB_RUN_ID"]
+              or payload.get("run_attempt") != os.environ["GITHUB_RUN_ATTEMPT"]
+              or payload.get("event_name") != os.environ["GITHUB_EVENT_NAME"]
+              or payload.get("sha") != os.environ["GITHUB_SHA"]
+              or payload.get("ref") != "refs/heads/main"
+              or payload.get("workflow_ref") != os.environ["GITHUB_WORKFLOW_REF"]
+              or payload.get("workflow_sha") != os.environ["GITHUB_WORKFLOW_SHA"]
+              or payload.get("runner_environment") != "github-hosted"
+              or not isinstance(workflow_sha, str)
+              or not re.fullmatch(r"[0-9a-f]{40}", workflow_sha)
+              or workflow_ref != f"{expected_workflow}@{workflow_sha}"
+          ):
+              raise SystemExit("reusable-workflow OIDC identity differs")
+          print(f"workflow={expected_workflow}")
+          print(f"digest={workflow_sha}")
+          PY
+
+      - name: Sign the exact runtime receipt
+        id: attest
+        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6
+        with:
+          subject-name: ${{ steps.subject.outputs.image_name }}
+          subject-digest: ${{ steps.subject.outputs.image_digest }}
+          predicate-type: ${{ env.STATIC_UI_PREDICATE_TYPE }}
+          predicate-path: ${{ steps.build.outputs.output }}/static-ui-runtime-receipt.json
+          push-to-registry: false
+          show-summary: true
+
+      - name: Verify signer, workflow, source, subject, and custom predicate
+        env:
+          BUNDLE: ${{ steps.attest.outputs.bundle-path }}
+          IMAGE: ${{ steps.subject.outputs.image }}
+          IMAGE_NAME: ${{ steps.subject.outputs.image_name }}
+          IMAGE_DIGEST: ${{ steps.subject.outputs.image_digest }}
+          NONCE: ${{ steps.release_inputs.outputs.nonce }}
+          OUTPUT_DIR: ${{ steps.build.outputs.output }}
+          SIGNER_WORKFLOW: ${{ steps.signer.outputs.workflow }}
+          SIGNER_DIGEST: ${{ steps.signer.outputs.digest }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          POLICY_DIR="$RUNNER_TEMP/static-ui-policy"
+          VERIFICATION="$OUTPUT_DIR/gh-attestation-verification.json"
+          gh attestation verify "oci://$IMAGE" \
+            --repo "$GITHUB_REPOSITORY" \
+            --bundle "$BUNDLE" \
+            --predicate-type "$STATIC_UI_PREDICATE_TYPE" \
+            --signer-workflow "$SIGNER_WORKFLOW" \
+            --signer-digest "$SIGNER_DIGEST" \
+            --source-digest "$GITHUB_SHA" \
+            --source-ref refs/heads/main \
+            --deny-self-hosted-runners \
+            --format json > "$VERIFICATION"
+          python3 "$POLICY_DIR/static_ui_release_gate.py" attestation \
+            --verification "$VERIFICATION" \
+            --receipt "$OUTPUT_DIR/static-ui-runtime-receipt.json" \
+            --inventory "$OUTPUT_DIR/exact-digest-rootfs-inventory.json" \
+            --policy "$POLICY_DIR/static-ui-runtime-profiles.json" \
+            --repository "$GITHUB_REPOSITORY" \
+            --image-name "$IMAGE_NAME" \
+            --image-digest "$IMAGE_DIGEST" \
+            --source-sha "$GITHUB_SHA" \
+            --run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --job "$GITHUB_JOB" \
+            --caller-workflow-ref "$GITHUB_WORKFLOW_REF" \
+            --caller-workflow-sha "$GITHUB_WORKFLOW_SHA" \
+            --nonce "$NONCE" \
+            --signer-workflow "$SIGNER_WORKFLOW" \
+            --signer-digest "$SIGNER_DIGEST" \
+            --output "$OUTPUT_DIR/verified-release-attestation.json"
+
+      - name: Upload verified non-secret release evidence
+        id: evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: static-ui-release-${{ github.event.repository.name }}-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            ${{ steps.build.outputs.output }}/context-manifest.json
+            ${{ steps.build.outputs.output }}/build-metadata.json
+            ${{ steps.build.outputs.output }}/build-invocation.json
+            ${{ steps.build.outputs.output }}/rootfs-inventory.json
+            ${{ steps.build.outputs.output }}/exact-digest-rootfs-inventory.json
+            ${{ steps.build.outputs.output }}/static-ui-runtime-receipt.json
+            ${{ steps.build.outputs.output }}/gh-attestation-verification.json
+            ${{ steps.build.outputs.output }}/verified-release-attestation.json
+            ${{ steps.attest.outputs.bundle-path }}
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+          overwrite: false
+
+      - name: Export evidence artifact name
+        id: evidence_name
+        env:
+          NAME: static-ui-release-${{ github.event.repository.name }}-${{ github.sha }}-${{ github.run_attempt }}
+        run: echo "name=$NAME" >> "$GITHUB_OUTPUT"
