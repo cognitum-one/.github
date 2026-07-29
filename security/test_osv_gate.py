@@ -19,7 +19,10 @@ def lock(version: str = "7.18.2") -> dict:
         "packages": {
             "": {"dependencies": {"react-router-dom": version}},
             "node_modules/react-router": {"version": version},
-            "node_modules/react-router-dom": {"version": version},
+            "node_modules/react-router-dom": {
+                "version": version,
+                "dependencies": {"react-router": version},
+            },
         },
     }
 
@@ -53,6 +56,26 @@ class OsvGateTest(unittest.TestCase):
         self.management_lock = self.root / "management-ui" / "package-lock.json"
         self.management_lock.parent.mkdir(parents=True)
         self.management_lock.write_text(json.dumps(lock()), encoding="utf-8")
+        self.management_manifest = self.root / "management-ui" / "package.json"
+        self.management_manifest.write_text(
+            json.dumps(
+                {
+                    "dependencies": {"react-router-dom": "7.18.2"},
+                    "scripts": {"build": "vite build"},
+                }
+            ),
+            encoding="utf-8",
+        )
+        self.management_source = self.root / "management-ui" / "src"
+        self.management_source.mkdir()
+        (self.management_source / "App.tsx").write_text(
+            'import { BrowserRouter } from "react-router-dom";',
+            encoding="utf-8",
+        )
+        (self.root / "management-ui" / "vite.config.ts").write_text(
+            'import { defineConfig } from "vite"; export default defineConfig({});',
+            encoding="utf-8",
+        )
         self.today = ROUTER_EXCEPTION_EXPIRES - dt.timedelta(days=1)
 
     def tearDown(self) -> None:
@@ -62,13 +85,12 @@ class OsvGateTest(unittest.TestCase):
         return evaluate(payload, repository=repository, root=self.root, today=self.today)
 
     def test_accepts_only_the_exact_patched_router_record(self) -> None:
-        blocking, dev_only, reviewed = self.evaluate(report(str(self.management_lock)))
+        blocking, reviewed = self.evaluate(report(str(self.management_lock)))
         self.assertEqual(blocking, [])
-        self.assertEqual(dev_only, [])
         self.assertEqual(len(reviewed), 1)
 
     def test_wrong_repository_is_not_excused(self) -> None:
-        blocking, _, reviewed = self.evaluate(
+        blocking, reviewed = self.evaluate(
             report(str(self.management_lock)),
             repository="attacker/fork",
         )
@@ -77,12 +99,20 @@ class OsvGateTest(unittest.TestCase):
 
     def test_version_or_lock_drift_is_not_excused(self) -> None:
         self.management_lock.write_text(json.dumps(lock("7.18.3")), encoding="utf-8")
-        blocking, _, reviewed = self.evaluate(report(str(self.management_lock)))
+        blocking, reviewed = self.evaluate(report(str(self.management_lock)))
+        self.assertEqual(len(blocking), 1)
+        self.assertEqual(reviewed, [])
+
+    def test_dependency_range_does_not_broaden_exception(self) -> None:
+        manifest = json.loads(self.management_manifest.read_text(encoding="utf-8"))
+        manifest["dependencies"]["react-router-dom"] = "^7.18.2"
+        self.management_manifest.write_text(json.dumps(manifest), encoding="utf-8")
+        blocking, reviewed = self.evaluate(report(str(self.management_lock)))
         self.assertEqual(len(blocking), 1)
         self.assertEqual(reviewed, [])
 
     def test_exception_expires_fail_closed(self) -> None:
-        blocking, _, reviewed = evaluate(
+        blocking, reviewed = evaluate(
             report(str(self.management_lock)),
             repository="cognitum-one/management",
             root=self.root,
@@ -92,11 +122,75 @@ class OsvGateTest(unittest.TestCase):
         self.assertEqual(reviewed, [])
 
     def test_other_high_advisory_remains_blocking(self) -> None:
-        blocking, _, reviewed = self.evaluate(
+        blocking, reviewed = self.evaluate(
             report(
                 str(self.management_lock),
                 package="brace-expansion",
                 version="2.1.2",
+                advisory="GHSA-mh99-v99m-4gvg",
+            )
+        )
+        self.assertEqual(len(blocking), 1)
+        self.assertEqual(reviewed, [])
+
+    def test_rsc_dependency_is_not_excused(self) -> None:
+        manifest = json.loads(self.management_manifest.read_text(encoding="utf-8"))
+        manifest.setdefault("devDependencies", {})["@react-router/dev"] = "7.18.2"
+        self.management_manifest.write_text(json.dumps(manifest), encoding="utf-8")
+        blocking, reviewed = self.evaluate(report(str(self.management_lock)))
+        self.assertEqual(len(blocking), 1)
+        self.assertEqual(reviewed, [])
+
+    def test_transitive_rsc_dependency_is_not_excused(self) -> None:
+        payload = json.loads(self.management_lock.read_text(encoding="utf-8"))
+        payload["packages"]["node_modules/react-server-dom-webpack"] = {
+            "version": "19.0.0"
+        }
+        self.management_lock.write_text(json.dumps(payload), encoding="utf-8")
+        blocking, reviewed = self.evaluate(report(str(self.management_lock)))
+        self.assertEqual(len(blocking), 1)
+        self.assertEqual(reviewed, [])
+
+    def test_nested_router_copy_is_not_excused(self) -> None:
+        payload = json.loads(self.management_lock.read_text(encoding="utf-8"))
+        payload["packages"]["node_modules/other/node_modules/react-router"] = {
+            "version": "7.18.2"
+        }
+        self.management_lock.write_text(json.dumps(payload), encoding="utf-8")
+        blocking, reviewed = self.evaluate(report(str(self.management_lock)))
+        self.assertEqual(len(blocking), 1)
+        self.assertEqual(reviewed, [])
+
+    def test_rsc_import_is_not_excused(self) -> None:
+        (self.management_source / "server.ts").write_text(
+            'import { unstable_matchRSCServerRequest } from "react-router";',
+            encoding="utf-8",
+        )
+        blocking, reviewed = self.evaluate(report(str(self.management_lock)))
+        self.assertEqual(len(blocking), 1)
+        self.assertEqual(reviewed, [])
+
+    def test_rsc_condition_is_not_excused(self) -> None:
+        manifest = json.loads(self.management_manifest.read_text(encoding="utf-8"))
+        manifest["scripts"]["build"] = "node --conditions=react-server build.mjs"
+        self.management_manifest.write_text(json.dumps(manifest), encoding="utf-8")
+        blocking, reviewed = self.evaluate(report(str(self.management_lock)))
+        self.assertEqual(len(blocking), 1)
+        self.assertEqual(reviewed, [])
+
+    def test_candidate_dev_flags_cannot_downgrade_a_finding(self) -> None:
+        payload = lock()
+        payload["packages"]["node_modules/prod-pkg"] = {
+            "name": "prod-pkg",
+            "version": "1.0.0",
+            "dev": "false",
+        }
+        self.management_lock.write_text(json.dumps(payload), encoding="utf-8")
+        blocking, reviewed = self.evaluate(
+            report(
+                str(self.management_lock),
+                package="prod-pkg",
+                version="1.0.0",
                 advisory="GHSA-mh99-v99m-4gvg",
             )
         )

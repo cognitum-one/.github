@@ -1,0 +1,7 @@
+# Organization-owned OSV-Scanner policy.
+#
+# This file intentionally contains no IgnoredVulns entries. The reusable
+# workflow passes it with --config so a caller-controlled osv-scanner.toml
+# cannot suppress findings before the independently pinned Python gate sees
+# them. Narrow database corrections belong in osv_gate.py with expiry and
+# adversarial tests.

@@ -12,6 +12,7 @@ import datetime as dt
 import json
 import os
 from pathlib import Path
+import re
 import sys
 from typing import Any
 
@@ -22,6 +23,45 @@ ROUTER_LOCKS = {
     ("cognitum-one/management", "management-ui/package-lock.json"),
     ("cognitum-one/website", "package-lock.json"),
 }
+ROUTER_PROFILES = {
+    ("cognitum-one/management", "management-ui/package-lock.json"): {
+        "manifest": "management-ui/package.json",
+        "source": ("management-ui/src",),
+        "config": ("management-ui/vite.config.ts",),
+    },
+    ("cognitum-one/website", "package-lock.json"): {
+        "manifest": "package.json",
+        "source": ("src",),
+        "config": ("vite.config.ts",),
+    },
+}
+PROHIBITED_RSC_DEPENDENCIES = {
+    "@react-router/dev",
+    "@react-router/node",
+    "@react-router/serve",
+    "react-server-dom-parcel",
+    "react-server-dom-turbopack",
+    "react-server-dom-webpack",
+}
+SHIPPED_SOURCE_EXTENSIONS = {
+    ".cjs",
+    ".cts",
+    ".js",
+    ".jsx",
+    ".mjs",
+    ".mts",
+    ".ts",
+    ".tsx",
+}
+RSC_SOURCE_PATTERN = re.compile(
+    r"(?:\bunstable_(?:matchRSCServerRequest|createCallServer|getRSCStream|RSC[A-Za-z0-9_]*)\b"
+    r"|react-router/dom|react-server-dom-[A-Za-z0-9_-]+|[\"']react-server[\"'])"
+)
+RSC_SCRIPT_PATTERN = re.compile(
+    r"(?:--conditions(?:=|\s+)react-server|(?:^|\s)react-router\s+(?:build|dev|serve)(?:\s|$))"
+)
+MAX_REVIEWED_SOURCE_BYTES = 32 * 1024 * 1024
+MAX_REVIEWED_FILE_BYTES = 2 * 1024 * 1024
 
 
 def _relative_source(source: str, root: Path) -> str | None:
@@ -39,25 +79,140 @@ def _read_lock(source: str) -> dict[str, Any] | None:
     return value if isinstance(value, dict) else None
 
 
-def dev_only_pairs(lock_path: str) -> set[tuple[str, str]]:
-    lock = _read_lock(lock_path)
-    if lock is None:
-        return set()
-    out: dict[tuple[str, str], bool] = {}
+def _safe_profile_path(root: Path, relative: str) -> Path | None:
+    candidate = root / relative
+    try:
+        current = root
+        for part in Path(relative).parts:
+            current /= part
+            if current.is_symlink():
+                return None
+        candidate.resolve().relative_to(root.resolve())
+    except (OSError, ValueError):
+        return None
+    return candidate
+
+
+def _read_profile_json(root: Path, relative: str) -> dict[str, Any] | None:
+    path = _safe_profile_path(root, relative)
+    if path is None or not path.is_file():
+        return None
+    return _read_lock(str(path))
+
+
+def _has_reviewed_spa_surface(
+    *,
+    repository: str,
+    relative_lock: str,
+    root: Path,
+) -> bool:
+    profile = ROUTER_PROFILES.get((repository, relative_lock))
+    if profile is None:
+        return False
+    manifest = _read_profile_json(root, profile["manifest"])
+    lock = _read_profile_json(root, relative_lock)
+    if manifest is None or lock is None:
+        return False
+
+    dependency_groups = (
+        "dependencies",
+        "devDependencies",
+        "optionalDependencies",
+        "peerDependencies",
+    )
+    dependencies = manifest.get("dependencies")
+    if (
+        not isinstance(dependencies, dict)
+        or dependencies.get("react-router-dom") != ROUTER_VERSION
+    ):
+        return False
+    for group_name in dependency_groups:
+        group = manifest.get(group_name, {})
+        if not isinstance(group, dict):
+            return False
+        if any(name in group for name in PROHIBITED_RSC_DEPENDENCIES):
+            return False
+        if "react-router" in group:
+            return False
+        if group_name != "dependencies" and "react-router-dom" in group:
+            return False
+
+    scripts = manifest.get("scripts", {})
+    if not isinstance(scripts, dict) or any(
+        not isinstance(script, str) or RSC_SCRIPT_PATTERN.search(script)
+        for script in scripts.values()
+    ):
+        return False
+
     packages = lock.get("packages")
     if not isinstance(packages, dict):
-        return set()
+        return False
+    root_package = packages.get("")
+    router = packages.get("node_modules/react-router")
+    router_dom = packages.get("node_modules/react-router-dom")
+    if not all(isinstance(item, dict) for item in (root_package, router, router_dom)):
+        return False
+    root_dependencies = root_package.get("dependencies")
+    dom_dependencies = router_dom.get("dependencies")
+    if (
+        not isinstance(root_dependencies, dict)
+        or root_dependencies.get("react-router-dom") != ROUTER_VERSION
+        or router.get("version") != ROUTER_VERSION
+        or router_dom.get("version") != ROUTER_VERSION
+        or not isinstance(dom_dependencies, dict)
+        or dom_dependencies.get("react-router") != ROUTER_VERSION
+    ):
+        return False
+    router_nodes = []
+    router_dom_nodes = []
     for package_path, metadata in packages.items():
-        if not package_path or not isinstance(metadata, dict):
-            continue
-        name = metadata.get("name") or package_path.split("node_modules/")[-1]
-        version = metadata.get("version")
-        if not isinstance(name, str) or not isinstance(version, str):
-            continue
-        dev_only = bool(metadata.get("dev") or metadata.get("devOptional"))
-        key = (name, version)
-        out[key] = dev_only and out.get(key, True)
-    return {key for key, is_dev_only in out.items() if is_dev_only}
+        if not isinstance(package_path, str) or not isinstance(metadata, dict):
+            return False
+        package_name = metadata.get("name")
+        if not isinstance(package_name, str):
+            package_name = package_path.split("node_modules/")[-1]
+        if package_name in PROHIBITED_RSC_DEPENDENCIES:
+            return False
+        if package_name == "react-router":
+            router_nodes.append(package_path)
+        elif package_name == "react-router-dom":
+            router_dom_nodes.append(package_path)
+    if router_nodes != ["node_modules/react-router"] or router_dom_nodes != [
+        "node_modules/react-router-dom"
+    ]:
+        return False
+
+    files: list[Path] = []
+    for relative_source in profile["source"]:
+        source_root = _safe_profile_path(root, relative_source)
+        if source_root is None or not source_root.is_dir():
+            return False
+        try:
+            for path in source_root.rglob("*"):
+                if path.is_symlink():
+                    return False
+                if path.is_file() and path.suffix in SHIPPED_SOURCE_EXTENSIONS:
+                    files.append(path)
+        except OSError:
+            return False
+    for relative_config in profile["config"]:
+        config = _safe_profile_path(root, relative_config)
+        if config is None or not config.is_file():
+            return False
+        files.append(config)
+
+    total_bytes = 0
+    try:
+        for path in files:
+            size = path.stat().st_size
+            total_bytes += size
+            if size > MAX_REVIEWED_FILE_BYTES or total_bytes > MAX_REVIEWED_SOURCE_BYTES:
+                return False
+            if RSC_SOURCE_PATTERN.search(path.read_text(encoding="utf-8")):
+                return False
+    except (OSError, UnicodeError):
+        return False
+    return True
 
 
 def reviewed_router_false_positive(
@@ -77,25 +232,14 @@ def reviewed_router_false_positive(
         or package != "react-router"
         or version != ROUTER_VERSION
         or advisory != ROUTER_ADVISORY
+        or not _has_reviewed_spa_surface(
+            repository=repository,
+            relative_lock=relative or "",
+            root=root,
+        )
     ):
         return False
-
-    lock = _read_lock(source)
-    packages = lock.get("packages") if lock else None
-    if not isinstance(packages, dict):
-        return False
-    root_package = packages.get("")
-    router = packages.get("node_modules/react-router")
-    router_dom = packages.get("node_modules/react-router-dom")
-    if not all(isinstance(item, dict) for item in (root_package, router, router_dom)):
-        return False
-    dependencies = root_package.get("dependencies")
-    return (
-        isinstance(dependencies, dict)
-        and dependencies.get("react-router-dom") == ROUTER_VERSION
-        and router.get("version") == ROUTER_VERSION
-        and router_dom.get("version") == ROUTER_VERSION
-    )
+    return True
 
 
 def evaluate(
@@ -110,7 +254,6 @@ def evaluate(
         raise ValueError("OSV JSON does not contain a results array")
 
     blocking: list[tuple[str, str, str, float, str]] = []
-    dev_only: list[tuple[str, str, str, float, str]] = []
     reviewed: list[tuple[str, str, str, float, str]] = []
     for result in results:
         if not isinstance(result, dict):
@@ -118,7 +261,6 @@ def evaluate(
         source = ((result.get("source") or {}).get("path")) or ""
         if not isinstance(source, str):
             raise ValueError("OSV source path is not a string")
-        excused = dev_only_pairs(source) if source.endswith("package-lock.json") else set()
         packages = result.get("packages")
         if not isinstance(packages, list):
             raise ValueError("OSV result packages is not an array")
@@ -173,11 +315,9 @@ def evaluate(
                     today=today,
                 ):
                     reviewed.append(row)
-                elif (name, version) in excused:
-                    dev_only.append(row)
                 else:
                     blocking.append(row)
-    return blocking, dev_only, reviewed
+    return blocking, reviewed
 
 
 def _format(rows: list[tuple[str, str, str, float, str]]) -> list[str]:
@@ -195,7 +335,7 @@ def main() -> int:
         report = json.loads(report_path.read_text(encoding="utf-8"))
         if not isinstance(report, dict):
             raise ValueError("OSV report root is not an object")
-        blocking, dev_only, reviewed = evaluate(
+        blocking, reviewed = evaluate(
             report,
             repository=repository,
             root=root,
@@ -212,13 +352,6 @@ def main() -> int:
             f"expires {ROUTER_EXCEPTION_EXPIRES.isoformat()}:"
         )
         for line in _format(reviewed):
-            print(line)
-    if dev_only:
-        print(
-            "::warning::%d High/Critical fixable vulnerability(ies) in DEV-ONLY "
-            "dependencies (not shipped; not blocking):" % len(dev_only)
-        )
-        for line in _format(dev_only):
             print(line)
     if blocking:
         print(f"::error::{len(blocking)} High/Critical vulnerabilities WITH fixes available:")
