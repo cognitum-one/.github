@@ -780,7 +780,7 @@ class StaticUiWorkflowPolicyTests(unittest.TestCase):
                 with self.assertRaises(WorkflowPolicyError):
                     self._verify(self._mutate("security", old, new))
 
-    def test_security_caller_template_cannot_float_or_omit_beacon_token(self) -> None:
+    def test_security_caller_template_cannot_float_or_omit_bridge_secrets(self) -> None:
         pin_match = re.search(
             r"security-scan\.yml@([0-9a-f]{40})",
             self.sources["template"],
@@ -794,12 +794,27 @@ class StaticUiWorkflowPolicyTests(unittest.TestCase):
                     "security-scan.yml@main",
                 )
             )
+        # The template must map the two App bridge secrets the reusable workflow
+        # declares. It mapped `static_ui_beacon_read_token` until 2026-07-30,
+        # which security-scan.yml no longer declares -- passing an undeclared
+        # secret is an "Invalid workflow file" error, so a caller that conformed
+        # to the template could not run at all.
         with self.assertRaises(WorkflowPolicyError):
             self._verify(
                 self._mutate(
                     "template",
-                    "static_ui_beacon_read_token: ${{ secrets.STATIC_UI_BEACON_READ_TOKEN }}",
+                    "static_ui_bridge_app_id: ${{ secrets.STATIC_UI_BRIDGE_APP_ID }}",
                     "secrets: inherit",
+                )
+            )
+        # And the removed name must not come back.
+        with self.assertRaisesRegex(WorkflowPolicyError, "removed secret"):
+            self._verify(
+                self._mutate(
+                    "template",
+                    "static_ui_bridge_app_id: ${{ secrets.STATIC_UI_BRIDGE_APP_ID }}",
+                    "static_ui_bridge_app_id: ${{ secrets.STATIC_UI_BRIDGE_APP_ID }}\n"
+                    "      static_ui_beacon_read_token: ${{ secrets.STATIC_UI_BEACON_READ_TOKEN }}",
                 )
             )
 
