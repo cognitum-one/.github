@@ -736,6 +736,18 @@ class StaticUiWorkflowPolicyTests(unittest.TestCase):
                 "            git -c credential.helper=store clone",
             ),
             (
+                "drop lazy checkout authentication",
+                (
+                    '          GIT_ASKPASS="$ASKPASS" GIT_TERMINAL_PROMPT=0 \\\n'
+                    '            git -C "$BEACON_ROOT" -c credential.helper= \\\n'
+                    '              checkout --detach "$BEACON_SHA"'
+                ),
+                (
+                    '          git -C "$BEACON_ROOT" -c credential.helper= '
+                    'checkout --detach "$BEACON_SHA"'
+                ),
+            ),
+            (
                 "website token fallback",
                 (
                     "          STATIC_UI_BRIDGE_TOKEN: "
