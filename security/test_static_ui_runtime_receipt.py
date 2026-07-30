@@ -1172,6 +1172,20 @@ class ReceiptAndRevisionTest(unittest.TestCase):
                 with self.assertRaises(receipt.PolicyError):
                     self.verify_premerge(value, **mutation)
 
+    def test_replay_mismatch_reports_names_without_values(self) -> None:
+        value = self.make_receipt()
+        with self.assertRaisesRegex(
+            receipt.PolicyError,
+            r"tuple differs: job, nonce",
+        ) as raised:
+            self.verify_premerge(
+                value,
+                expected_job="private-job-value",
+                expected_nonce="0" * 64,
+            )
+        self.assertNotIn("private-job-value", str(raised.exception))
+        self.assertNotIn("0" * 64, str(raised.exception))
+
     def test_forged_generator_digest_fails_even_with_recomputed_receipt_hash(
         self,
     ) -> None:
