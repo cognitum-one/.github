@@ -249,7 +249,16 @@ jobs:
           }
           POLICY_DIR="$RUNNER_TEMP/osv-policy"
           BEACON_ROOT="$RUNNER_TEMP/static-ui-beacon"
+          ASKPASS="$RUNNER_TEMP/static-ui-beacon-askpass.sh"
           test ! -e "$BEACON_ROOT"
+          test ! -e "$ASKPASS"
+          cleanup_beacon_credentials() {
+            if [ -f "$ASKPASS" ]; then
+              : > "$ASKPASS"
+              rm -f "$ASKPASS"
+            fi
+          }
+          trap cleanup_beacon_credentials EXIT
           BEACON_SHA="$(POLICY_DIR="$POLICY_DIR" python3 <<'PY'
           import json
           import os
@@ -266,10 +275,25 @@ jobs:
           print(sha)
           PY
           )"
-          gh repo clone cognitum-one/beacon "$BEACON_ROOT" -- \
-            --filter=blob:none --no-checkout
-          git -C "$BEACON_ROOT" fetch --depth=1 origin "$BEACON_SHA"
-          git -C "$BEACON_ROOT" checkout --detach "$BEACON_SHA"
+          # The token is not persisted in Git config or a remote URL. Git invokes
+          # this runner-temporary helper only when github.com asks for credentials.
+          # shellcheck disable=SC2016
+          printf '%s\n' \
+            '#!/bin/sh' \
+            'case "$1" in' \
+            '  *Username*) printf "%s\n" x-access-token ;;' \
+            '  *Password*) printf "%s\n" "$GH_TOKEN" ;;' \
+            '  *) exit 1 ;;' \
+            'esac' > "$ASKPASS"
+          chmod 0700 "$ASKPASS"
+          GIT_ASKPASS="$ASKPASS" GIT_TERMINAL_PROMPT=0 \
+            git -c credential.helper= clone \
+              --filter=blob:none --no-checkout \
+              https://github.com/cognitum-one/beacon.git "$BEACON_ROOT"
+          GIT_ASKPASS="$ASKPASS" GIT_TERMINAL_PROMPT=0 \
+            git -C "$BEACON_ROOT" -c credential.helper= \
+              fetch --depth=1 origin "$BEACON_SHA"
+          git -C "$BEACON_ROOT" -c credential.helper= checkout --detach "$BEACON_SHA"
           test "$(git -C "$BEACON_ROOT" rev-parse HEAD)" = "$BEACON_SHA"
           echo "root=$BEACON_ROOT" >> "$GITHUB_OUTPUT"
 

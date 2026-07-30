@@ -478,9 +478,26 @@ def _verify_security_app_bridge(source: str) -> None:
         (
             "if: ${{ github.repository == 'cognitum-one/website' }}",
             f"GH_TOKEN: {token_output}",
+            'ASKPASS="$RUNNER_TEMP/static-ui-beacon-askpass.sh"',
+            "trap cleanup_beacon_credentials EXIT",
+            "'  *Username*) printf \"%s\\n\" x-access-token ;;'",
+            "'  *Password*) printf \"%s\\n\" \"$GH_TOKEN\" ;;'",
+            'chmod 0700 "$ASKPASS"',
+            'GIT_ASKPASS="$ASKPASS" GIT_TERMINAL_PROMPT=0',
+            "git -c credential.helper= clone",
+            "https://github.com/cognitum-one/beacon.git",
+            'git -C "$BEACON_ROOT" -c credential.helper=',
         ),
         "security Beacon checkout step",
     )
+    if (
+        "gh repo clone" in beacon_step
+        or "https://x-access-token:" in beacon_step
+        or "credential.helper store" in beacon_step
+    ):
+        raise WorkflowPolicyError(
+            "security Beacon checkout must use the ephemeral askpass boundary"
+        )
     _require(
         runtime_step,
         (
