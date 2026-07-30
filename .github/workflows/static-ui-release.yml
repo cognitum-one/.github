@@ -48,15 +48,15 @@ concurrency:
 
 env:
   # Finalized organization policy revision. Repin all eight hashes atomically.
-  OSV_POLICY_COMMIT: "5643a7a40c9a1c07ebe0a3be30f4caf5dd40c953"
+  OSV_POLICY_COMMIT: "dd4eb0a5237cde544f624a17f3a198e12d14ebe3"
   OSV_GATE_SHA256: "669216fa6f6f106987e1d4e8ec6c3d5afd00c7a5cee364b90758960a8637d4ae"
   OSV_GATE_TEST_SHA256: "60cda6a8aa55f30745af42685a994ef9eede17ac3149df89b7f030f266fe913e"
   OSV_CONFIG_SHA256: "5bd10fc47448111e6d8bed4682b9b80e4c420ca6cb0808a252b8c6d8cd920c34"
   OSV_RUNNER_SHA256: "32ae0d4a9e3d1e461e91fc0fcbd9c3888928282bbd2371ab3ddfa9872ee409c1"
   OSV_RUNNER_TEST_SHA256: "c76a51f8bfceda09dfaa92bd479ca67a7ad893ca570a79ec5d3d2fb71d2bafdb"
   STATIC_UI_PROFILES_SHA256: "77bb574375e586cbadd4f845c548a7541f04e61d1fbb98ae50f030efa32b44fc"
-  STATIC_UI_RECEIPT_SHA256: "b31a9d95a7547ab5471cf6901b878ccaf2e2abe5dca89f086b0f6e9f41e18b25"
-  STATIC_UI_RECEIPT_TEST_SHA256: "c8de3a9ba905b60b38a13ca9db37e3dc26bfedd932cec2cc7ac21bb5af5c2434"
+  STATIC_UI_RECEIPT_SHA256: "09fe7efecd17bad3867b390557b8c8f000968299f74d96d258fcc975876a8f5c"
+  STATIC_UI_RECEIPT_TEST_SHA256: "0f76e2769cceb3d58aa1677b5e99a964b372480a0867c4bc6aff753e81eef184"
   # Two-commit bootstrap: replace with the first PR2 content commit, then commit
   # only this pin/hash update. Zero is intentionally non-runnable/fail-closed.
   STATIC_UI_WORKFLOW_COMMIT: "e0a423bede1c7855e62b27832ec5cc0167c13d03"

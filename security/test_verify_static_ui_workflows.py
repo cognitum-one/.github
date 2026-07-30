@@ -385,7 +385,7 @@ class StaticUiWorkflowPolicyTests(unittest.TestCase):
         sources = copy.deepcopy(self.sources)
         for target in ("security", "release", "revision"):
             sources[target] = sources[target].replace(
-                "5643a7a40c9a1c07ebe0a3be30f4caf5dd40c953",
+                "dd4eb0a5237cde544f624a17f3a198e12d14ebe3",
                 "1" * 40,
                 1,
             )
@@ -397,7 +397,7 @@ class StaticUiWorkflowPolicyTests(unittest.TestCase):
         sources = copy.deepcopy(self.sources)
         for target in ("security", "release", "revision"):
             sources[target] = sources[target].replace(
-                "b31a9d95a7547ab5471cf6901b878ccaf2e2abe5dca89f086b0f6e9f41e18b25",
+                "09fe7efecd17bad3867b390557b8c8f000968299f74d96d258fcc975876a8f5c",
                 "2" * 64,
                 1,
             )
