@@ -726,6 +726,16 @@ class StaticUiWorkflowPolicyTests(unittest.TestCase):
                 ),
             ),
             (
+                "remove authenticated Git boundary",
+                "            git -c credential.helper= clone",
+                "            git clone",
+            ),
+            (
+                "persist Beacon credential helper",
+                "            git -c credential.helper= clone",
+                "            git -c credential.helper=store clone",
+            ),
+            (
                 "website token fallback",
                 (
                     "          STATIC_UI_BRIDGE_TOKEN: "
