@@ -11,7 +11,10 @@ name: security-scan
 #                           weekly schedule (and manual dispatch) only.
 #                           Integrity, execution, and parse failures still block.
 # OSV policy: every High/Critical vulnerability with a fix blocks. Candidate
-#   lockfile `dev` flags are not trusted to downgrade findings.
+#   lockfile `dev` flags are not trusted to downgrade findings. A repository with
+#   no dependency manifests at all PASSES: osv-scanner exits 128 with "No package
+#   sources found", and the wrapper accepts that only when both invocations agree
+#   and no report was produced. Any other non-zero status still fails closed.
 # The sole database correction is GHSA-qwww-vcr4-c8h2 for react-router 7.18.2,
 # which the maintainer identifies as patched while OSV still models as affected.
 # It applies only to two reviewed repository/lockfile pairs, requires exact locked
