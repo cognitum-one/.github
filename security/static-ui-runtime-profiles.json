@@ -177,7 +177,7 @@
       "packagingFiles": {
         ".dockerignore": "98af2b0b689d300d08e919076b189ba50aee50f300145fe14a9eab0be5683550",
         ".gitmodules": "a3c1a981289be20d90156902ecdd3db26775798652389ffe1f900a25355a4800",
-        "Dockerfile": "2d87d8a7f80cebd22d9fbabbfe3084a15c46d2dccf5f5fbeb909d4b23465b6d3",
+        "Dockerfile": "5893b01ff754dec66121b35fa8a30ba3d9fc8e5a2a26bb7d2faf44c7e2d8abc2",
         "config/frontend-runtime-config.json": "fc4347ead1b4ae59336e0727faddf2d249809e30b5cbc0814f9cf1db6e0c1a67",
         "docker-entrypoint.sh": "14b44204f83b8208fd09c53035edcb684193fe2298f34aa6b85fd8f2afdcb37e",
         "nginx.conf": "db577824ad8f7d44cab4cfa4e8c1fb41219eb19cba748eb389c78e078b66fab5",
@@ -193,8 +193,8 @@
           "repositoryId": "1295863262",
           "ownerId": "256911919",
           "visibility": "private",
-          "commitSha": "3063e6bd4a2dae21b118f98b287f91f30c727408",
-          "treeSha": "f97f71ff6804bcdb1f31830d8f23b1b9324dee4f"
+          "commitSha": "15d831e7fb416545100d95e96846111b164eec41",
+          "treeSha": "f3c3dee5aff11f223052292e1210074b8adeb5dd"
         }
       },
       "buildSecret": null,
