@@ -23,5 +23,10 @@ jobs:
     uses: cognitum-one/.github/.github/workflows/security-scan.yml@e0a423bede1c7855e62b27832ec5cc0167c13d03
     # Required only for cognitum-one/website. Other repositories may omit the
     # mapping; the shared workflow never receives unrelated repository secrets.
+    #
+    # These two feed `actions/create-github-app-token` inside the shared workflow,
+    # which mints a token scoped to exactly [website, beacon] with contents:read
+    # for the life of the job. Nothing long-lived is stored.
     secrets:
-      static_ui_beacon_read_token: ${{ secrets.STATIC_UI_BEACON_READ_TOKEN }}
+      static_ui_bridge_app_id: ${{ secrets.STATIC_UI_BRIDGE_APP_ID }}
+      static_ui_bridge_app_private_key: ${{ secrets.STATIC_UI_BRIDGE_APP_KEY }}

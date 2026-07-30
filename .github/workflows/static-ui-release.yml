@@ -15,10 +15,15 @@ on:
       static_ui_release_service_account:
         description: Dedicated staging builder identity; never a runtime identity.
         required: true
-      static_ui_beacon_read_token:
+      static_ui_bridge_app_id:
         description: >-
-          Read-only token for the exact private website/Beacon identities and
-          Beacon commit (website only).
+          GitHub App ID used only to mint the website Beacon bridge token.
+          Required only when the caller is cognitum-one/website.
+        required: false
+      static_ui_bridge_app_private_key:
+        description: >-
+          GitHub App private key used only by the pinned token-minting action.
+          Required only when the caller is cognitum-one/website.
         required: false
     outputs:
       image_name:
@@ -158,17 +163,42 @@ jobs:
           python3 "$POLICY_DIR/test_static_ui_runtime_receipt.py"
           python3 "$POLICY_DIR/test_static_ui_release_gate.py"
 
+      - name: Mint the exact website and Beacon read token
+        id: static-ui-bridge-token
+        if: ${{ github.repository == 'cognitum-one/website' }}
+        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547
+        with:
+          app-id: ${{ secrets.static_ui_bridge_app_id }}
+          private-key: ${{ secrets.static_ui_bridge_app_private_key }}
+          owner: cognitum-one
+          repositories: |
+            website
+            beacon
+          permission-contents: read
+
       - name: Checkout the exact Beacon submodule source outside the candidate
         id: beacon
         if: ${{ github.repository == 'cognitum-one/website' }}
         env:
-          GH_TOKEN: ${{ secrets.static_ui_beacon_read_token }}
+          GH_TOKEN: ${{ steps.static-ui-bridge-token.outputs.token }}
         run: |
           set -euo pipefail
-          test -n "$GH_TOKEN"
+          test -n "$GH_TOKEN" || {
+            echo "::error::The website release proof requires its scoped GitHub App bridge token."
+            exit 1
+          }
           POLICY_DIR="$RUNNER_TEMP/static-ui-policy"
           BEACON_ROOT="$RUNNER_TEMP/static-ui-beacon"
+          ASKPASS="$RUNNER_TEMP/static-ui-beacon-askpass.sh"
           test ! -e "$BEACON_ROOT"
+          test ! -e "$ASKPASS"
+          cleanup_beacon_credentials() {
+            if [ -f "$ASKPASS" ]; then
+              : > "$ASKPASS"
+              rm -f "$ASKPASS"
+            fi
+          }
+          trap cleanup_beacon_credentials EXIT
           BEACON_SHA="$(POLICY_DIR="$POLICY_DIR" python3 <<'PY'
           import json
           import os
@@ -185,10 +215,29 @@ jobs:
           print(sha)
           PY
           )"
-          gh repo clone cognitum-one/beacon "$BEACON_ROOT" -- \
-            --filter=blob:none --no-checkout
-          git -C "$BEACON_ROOT" fetch --depth=1 origin "$BEACON_SHA"
-          git -C "$BEACON_ROOT" checkout --detach "$BEACON_SHA"
+          # The token is not persisted in Git config or a remote URL. Git invokes
+          # this runner-temporary helper only when github.com asks for credentials.
+          # shellcheck disable=SC2016
+          printf '%s\n' \
+            '#!/bin/sh' \
+            'case "$1" in' \
+            '  *Username*) printf "%s\n" x-access-token ;;' \
+            '  *Password*) printf "%s\n" "$GH_TOKEN" ;;' \
+            '  *) exit 1 ;;' \
+            'esac' > "$ASKPASS"
+          chmod 0700 "$ASKPASS"
+          GIT_ASKPASS="$ASKPASS" GIT_TERMINAL_PROMPT=0 \
+            git -c credential.helper= clone \
+              --filter=blob:none --no-checkout \
+              https://github.com/cognitum-one/beacon.git "$BEACON_ROOT"
+          GIT_ASKPASS="$ASKPASS" GIT_TERMINAL_PROMPT=0 \
+            git -C "$BEACON_ROOT" -c credential.helper= \
+              fetch --depth=1 origin "$BEACON_SHA"
+          # A partial clone can lazily fetch commit payloads during checkout, so
+          # checkout must use the same ephemeral helper as clone and fetch.
+          GIT_ASKPASS="$ASKPASS" GIT_TERMINAL_PROMPT=0 \
+            git -C "$BEACON_ROOT" -c credential.helper= \
+              checkout --detach "$BEACON_SHA"
           test "$(git -C "$BEACON_ROOT" rev-parse HEAD)" = "$BEACON_SHA"
           echo "root=$BEACON_ROOT" >> "$GITHUB_OUTPUT"
 
@@ -282,10 +331,24 @@ jobs:
           IMAGE_TAG: ${{ steps.release_inputs.outputs.image_tag }}
           NONCE: ${{ steps.release_inputs.outputs.nonce }}
           REPOSITORY_VISIBILITY: ${{ github.event.repository.visibility }}
-          STATIC_UI_IDENTITY_TOKEN: ${{ github.repository == 'cognitum-one/website' && secrets.static_ui_beacon_read_token || github.token }}
+          STATIC_UI_BRIDGE_TOKEN: ${{ steps.static-ui-bridge-token.outputs.token }}
+          STATIC_UI_MANAGEMENT_TOKEN: ${{ github.repository == 'cognitum-one/management' && github.token || '' }}
         run: |
           set -euo pipefail
           test "$REPOSITORY_VISIBILITY" = "private"
+          case "$GITHUB_REPOSITORY" in
+            cognitum-one/website)
+              STATIC_UI_IDENTITY_TOKEN="$STATIC_UI_BRIDGE_TOKEN"
+              ;;
+            cognitum-one/management)
+              STATIC_UI_IDENTITY_TOKEN="$STATIC_UI_MANAGEMENT_TOKEN"
+              ;;
+            *)
+              echo "::error::Static-UI release proof is not admitted for $GITHUB_REPOSITORY."
+              exit 1
+              ;;
+          esac
+          unset STATIC_UI_BRIDGE_TOKEN STATIC_UI_MANAGEMENT_TOKEN
           test -n "$STATIC_UI_IDENTITY_TOKEN"
           POLICY_DIR="$RUNNER_TEMP/static-ui-policy"
           OUTPUT_DIR="$RUNNER_TEMP/static-ui-release-evidence"

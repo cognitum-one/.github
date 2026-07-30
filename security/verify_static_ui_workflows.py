@@ -616,6 +616,39 @@ def _verify_security(source: str) -> None:
 def _verify_release(source: str, allow_unresolved_self_pin: bool) -> None:
     _verify_common(source, "release workflow")
     _verify_trusted_buildkit(source, "release workflow")
+    # The security scan has required the ephemeral askpass boundary since the App
+    # bridge landed, but this workflow was not covered and kept the original
+    # `gh repo clone` followed by a bare `git fetch`. `gh` authenticates the clone
+    # through its own credential path and leaves a plain https remote behind, so
+    # with `--filter=blob:none --no-checkout` the fetch that actually retrieves
+    # the objects ran unauthenticated. Requiring the boundary here stops that
+    # shape returning to this file the way it survived the last migration.
+    if (
+        "gh repo clone" in source
+        or "https://x-access-token:" in source
+        or "credential.helper store" in source
+    ):
+        raise WorkflowPolicyError(
+            "release Beacon checkout must use the ephemeral askpass boundary"
+        )
+    askpass_boundary = 'GIT_ASKPASS="$ASKPASS" GIT_TERMINAL_PROMPT=0'
+    if source.count(askpass_boundary) != 3 or source.count(
+        'git -C "$BEACON_ROOT" -c credential.helper='
+    ) != 2:
+        raise WorkflowPolicyError(
+            "release Beacon clone, fetch, and partial-clone checkout must all "
+            "use the ephemeral askpass boundary"
+        )
+    for fragment in (
+        "static_ui_beacon_read_token",
+        "STATIC_UI_BEACON_READ_TOKEN",
+        "permission-contents: write",
+        "repositories: '*'",
+    ):
+        if fragment in source:
+            raise WorkflowPolicyError(
+                f"release workflow retains a legacy credential grammar: {fragment}"
+            )
     required = (
         "attestations: write",
         "id-token: write",
@@ -641,7 +674,17 @@ def _verify_release(source: str, allow_unresolved_self_pin: bool) -> None:
         "--mode release",
         'rm -f -- "$OUTPUT_DIR/management-vite.env"',
         "REPOSITORY_VISIBILITY: ${{ github.event.repository.visibility }}",
-        "STATIC_UI_IDENTITY_TOKEN: ${{ github.repository == 'cognitum-one/website' && secrets.static_ui_beacon_read_token || github.token }}",
+        # The release workflow derives its identity token the same way the
+        # security scan does: from the scoped GitHub App bridge, selected in
+        # shell rather than interpolated. It previously required
+        # `secrets.static_ui_beacon_read_token`, which no longer exists on any
+        # caller, so for cognitum-one/website that expression resolved to the
+        # empty string instead of falling through to github.token.
+        "STATIC_UI_BRIDGE_TOKEN: ${{ steps.static-ui-bridge-token.outputs.token }}",
+        "STATIC_UI_MANAGEMENT_TOKEN: ${{ github.repository == 'cognitum-one/management' && github.token || '' }}",
+        'STATIC_UI_IDENTITY_TOKEN="$STATIC_UI_BRIDGE_TOKEN"',
+        'STATIC_UI_IDENTITY_TOKEN="$STATIC_UI_MANAGEMENT_TOKEN"',
+        "unset STATIC_UI_BRIDGE_TOKEN STATIC_UI_MANAGEMENT_TOKEN",
         'test -n "$STATIC_UI_IDENTITY_TOKEN"',
         'GH_TOKEN="$STATIC_UI_IDENTITY_TOKEN"',
         'GITHUB_REPOSITORY_VISIBILITY="$REPOSITORY_VISIBILITY"',
@@ -822,10 +865,23 @@ def _verify_template(
         (
             "permissions:\n  contents: read",
             "permissions:\n      contents: read",
-            "static_ui_beacon_read_token: ${{ secrets.STATIC_UI_BEACON_READ_TOKEN }}",
+            # The template must map what security-scan.yml actually declares.
+            # It mapped `static_ui_beacon_read_token` until 2026-07-30 -- a name
+            # the reusable workflow stopped declaring when the App bridge landed.
+            # Passing an undeclared secret is an "Invalid workflow file" error,
+            # not a soft failure, so any caller conforming to the template was
+            # broken. cognitum-one/website hit exactly this and had to diverge
+            # from the template deliberately (website#331).
+            "static_ui_bridge_app_id: ${{ secrets.STATIC_UI_BRIDGE_APP_ID }}",
+            "static_ui_bridge_app_private_key: ${{ secrets.STATIC_UI_BRIDGE_APP_KEY }}",
         ),
         "security caller template",
     )
+    for fragment in ("static_ui_beacon_read_token", "STATIC_UI_BEACON_READ_TOKEN"):
+        if fragment in source:
+            raise WorkflowPolicyError(
+                f"security caller template retains a removed secret: {fragment}"
+            )
     match = re.search(
         r"uses:\s*cognitum-one/\.github/\.github/workflows/"
         r"security-scan\.yml@([0-9a-f]{40})",
