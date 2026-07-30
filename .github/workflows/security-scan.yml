@@ -293,7 +293,11 @@ jobs:
           GIT_ASKPASS="$ASKPASS" GIT_TERMINAL_PROMPT=0 \
             git -C "$BEACON_ROOT" -c credential.helper= \
               fetch --depth=1 origin "$BEACON_SHA"
-          git -C "$BEACON_ROOT" -c credential.helper= checkout --detach "$BEACON_SHA"
+          # A partial clone can lazily fetch commit payloads during checkout, so
+          # checkout must use the same ephemeral helper as clone and fetch.
+          GIT_ASKPASS="$ASKPASS" GIT_TERMINAL_PROMPT=0 \
+            git -C "$BEACON_ROOT" -c credential.helper= \
+              checkout --detach "$BEACON_SHA"
           test "$(git -C "$BEACON_ROOT" rev-parse HEAD)" = "$BEACON_SHA"
           echo "root=$BEACON_ROOT" >> "$GITHUB_OUTPUT"
 

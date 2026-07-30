@@ -498,6 +498,18 @@ def _verify_security_app_bridge(source: str) -> None:
         raise WorkflowPolicyError(
             "security Beacon checkout must use the ephemeral askpass boundary"
         )
+    askpass_boundary = 'GIT_ASKPASS="$ASKPASS" GIT_TERMINAL_PROMPT=0'
+    if (
+        beacon_step.count(askpass_boundary) != 3
+        or beacon_step.count(
+            'git -C "$BEACON_ROOT" -c credential.helper='
+        )
+        != 2
+    ):
+        raise WorkflowPolicyError(
+            "security Beacon clone, fetch, and partial-clone checkout must all "
+            "use the ephemeral askpass boundary"
+        )
     _require(
         runtime_step,
         (
