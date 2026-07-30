@@ -35,6 +35,7 @@ EXPECTED_BUILDX_URL = (
 EXPECTED_ACTIONS = {
     "actions/attest": "f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6",
     "actions/checkout": "11d5960a326750d5838078e36cf38b85af677262",
+    "actions/create-github-app-token": "d72941d797fd3113feb6b93fd0dec494b13a2547",
     "actions/upload-artifact": "043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
     "docker/setup-buildx-action": "8d2750c68a42422c14e847fe6c8ac0403b4cbd6f",
     "google-github-actions/auth": "7c6bc770dae815cd3e89ee6cdf493a5fab2cc093",
@@ -341,11 +342,190 @@ def _verify_common(source: str, label: str) -> None:
             raise WorkflowPolicyError(f"{label} contains forbidden grammar: {fragment}")
 
 
+def _verify_security_app_bridge(source: str) -> None:
+    secret_block_match = re.search(
+        r"(?ms)^  workflow_call:\n    secrets:\n"
+        r"(?P<body>.*?)^permissions:\n",
+        source,
+    )
+    if secret_block_match is None:
+        raise WorkflowPolicyError(
+            "security workflow GitHub App secret contract is missing"
+        )
+    secret_block = secret_block_match.group("body")
+    secret_names = re.findall(r"(?m)^      ([a-z][a-z0-9_]+):\s*$", secret_block)
+    if secret_names != [
+        "static_ui_bridge_app_id",
+        "static_ui_bridge_app_private_key",
+    ]:
+        raise WorkflowPolicyError(
+            "security workflow must accept only the two named GitHub App secrets"
+        )
+    if secret_block.count("        required: false") != 2:
+        raise WorkflowPolicyError(
+            "security workflow GitHub App secrets must remain optional for other callers"
+        )
+
+    starts = [match.start() for match in re.finditer(r"(?m)^      - ", source)]
+    steps = [
+        source[start : starts[index + 1] if index + 1 < len(starts) else len(source)]
+        for index, start in enumerate(starts)
+    ]
+    token_steps = [
+        step
+        for step in steps
+        if "uses: actions/create-github-app-token@" in step
+    ]
+    if len(token_steps) != 1:
+        raise WorkflowPolicyError(
+            "security workflow must mint exactly one GitHub App token"
+        )
+    token_step = token_steps[0]
+    required_token_step = (
+        "name: Mint the exact website and Beacon read token",
+        "id: static-ui-bridge-token",
+        "if: ${{ github.repository == 'cognitum-one/website' }}",
+        (
+            "uses: actions/create-github-app-token@"
+            "d72941d797fd3113feb6b93fd0dec494b13a2547"
+        ),
+        "app-id: ${{ secrets.static_ui_bridge_app_id }}",
+        "private-key: ${{ secrets.static_ui_bridge_app_private_key }}",
+        "owner: cognitum-one",
+        "repositories: |\n            website\n            beacon",
+        "permission-contents: read",
+    )
+    _require(token_step, required_token_step, "security GitHub App token step")
+    inputs = re.findall(
+        r"(?m)^          ([a-z][a-z0-9-]*):(?:\s.*)?$",
+        token_step,
+    )
+    if inputs != [
+        "app-id",
+        "private-key",
+        "owner",
+        "repositories",
+        "permission-contents",
+    ]:
+        raise WorkflowPolicyError(
+            "security GitHub App token inputs differ from the reviewed grammar"
+        )
+    repositories_match = re.search(
+        r"(?m)^          repositories: \|\n"
+        r"((?:            [^\n]*\n?)*)",
+        token_step,
+    )
+    repositories = (
+        [
+            line.strip()
+            for line in repositories_match.group(1).splitlines()
+            if line.strip()
+        ]
+        if repositories_match is not None
+        else []
+    )
+    if repositories != ["website", "beacon"]:
+        raise WorkflowPolicyError(
+            "security GitHub App token repository set differs from website and Beacon"
+        )
+    if "env:" in token_step or "skip-token-revoke" in token_step:
+        raise WorkflowPolicyError(
+            "security GitHub App credentials may only enter the pinned action"
+        )
+
+    app_id = "${{ secrets.static_ui_bridge_app_id }}"
+    private_key = "${{ secrets.static_ui_bridge_app_private_key }}"
+    if source.count(app_id) != 1 or source.count(private_key) != 1:
+        raise WorkflowPolicyError(
+            "security GitHub App credentials escaped their one minting step"
+        )
+    legacy_fragments = (
+        "static_ui_beacon_read_token",
+        "STATIC_UI_BEACON_READ_TOKEN",
+        "permission-contents: write",
+        "repositories: '*'",
+    )
+    for fragment in legacy_fragments:
+        if fragment in source:
+            raise WorkflowPolicyError(
+                f"security GitHub App bridge contains forbidden grammar: {fragment}"
+            )
+
+    beacon_steps = [
+        step
+        for step in steps
+        if "name: Checkout the exact Beacon submodule source outside the candidate"
+        in step
+    ]
+    runtime_steps = [
+        step
+        for step in steps
+        if "name: Build and verify the committed static-UI runtime" in step
+    ]
+    if len(beacon_steps) != 1 or len(runtime_steps) != 1:
+        raise WorkflowPolicyError(
+            "security GitHub App token consumers differ from the reviewed steps"
+        )
+    beacon_step = beacon_steps[0]
+    runtime_step = runtime_steps[0]
+    token_output = "${{ steps.static-ui-bridge-token.outputs.token }}"
+    if source.count(token_output) != 2:
+        raise WorkflowPolicyError(
+            "security GitHub App token must reach only Beacon checkout and runtime proof"
+        )
+    _require(
+        beacon_step,
+        (
+            "if: ${{ github.repository == 'cognitum-one/website' }}",
+            f"GH_TOKEN: {token_output}",
+        ),
+        "security Beacon checkout step",
+    )
+    _require(
+        runtime_step,
+        (
+            f"STATIC_UI_BRIDGE_TOKEN: {token_output}",
+            (
+                "STATIC_UI_MANAGEMENT_TOKEN: "
+                "${{ github.repository == 'cognitum-one/management' "
+                "&& github.token || '' }}"
+            ),
+            'case "$GITHUB_REPOSITORY" in',
+            "cognitum-one/website)",
+            'STATIC_UI_IDENTITY_TOKEN="$STATIC_UI_BRIDGE_TOKEN"',
+            "cognitum-one/management)",
+            'STATIC_UI_IDENTITY_TOKEN="$STATIC_UI_MANAGEMENT_TOKEN"',
+            "unset STATIC_UI_BRIDGE_TOKEN STATIC_UI_MANAGEMENT_TOKEN",
+            'GH_TOKEN="$STATIC_UI_IDENTITY_TOKEN"',
+        ),
+        "security runtime identity step",
+    )
+    if (
+        "github.repository == 'cognitum-one/website' && github.token"
+        in runtime_step
+        or "secrets.static_ui_bridge_app_" in runtime_step
+    ):
+        raise WorkflowPolicyError(
+            "website runtime proof must not fall back or receive App credentials"
+        )
+    _require_order(
+        source,
+        (
+            "Mint the exact website and Beacon read token",
+            "Checkout the exact Beacon submodule source outside the candidate",
+            "Build and verify the committed static-UI runtime",
+        ),
+        "security GitHub App bridge",
+    )
+
+
 def _verify_security(source: str) -> None:
     _verify_common(source, "security workflow")
     _verify_trusted_buildkit(source, "security workflow")
+    _verify_security_app_bridge(source)
     required = (
-        "static_ui_beacon_read_token:",
+        "static_ui_bridge_app_id:",
+        "static_ui_bridge_app_private_key:",
         "fetch-depth: 0",
         "persist-credentials: false",
         "deps:\n    name: dependency scan (OSV, fail on High+ fixable)\n    runs-on: ubuntu-24.04",
@@ -360,7 +540,8 @@ def _verify_security(source: str) -> None:
         "--mode premerge",
         'rm -f -- "$OUTPUT_DIR/management-vite.env"',
         "REPOSITORY_VISIBILITY: ${{ github.event.repository.visibility }}",
-        "STATIC_UI_IDENTITY_TOKEN: ${{ github.repository == 'cognitum-one/website' && secrets.static_ui_beacon_read_token || github.token }}",
+        "STATIC_UI_BRIDGE_TOKEN: ${{ steps.static-ui-bridge-token.outputs.token }}",
+        "STATIC_UI_MANAGEMENT_TOKEN: ${{ github.repository == 'cognitum-one/management' && github.token || '' }}",
         'test -n "$STATIC_UI_IDENTITY_TOKEN"',
         'GH_TOKEN="$STATIC_UI_IDENTITY_TOKEN"',
         'GITHUB_REPOSITORY_VISIBILITY="$REPOSITORY_VISIBILITY"',

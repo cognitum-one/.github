@@ -648,6 +648,113 @@ class StaticUiWorkflowPolicyTests(unittest.TestCase):
         with self.assertRaisesRegex(WorkflowPolicyError, "full SHA"):
             self._verify(sources)
 
+    def test_security_beacon_app_bridge_is_optional_exact_and_non_expanding(
+        self,
+    ) -> None:
+        # The unmodified workflow proves callers other than website may omit
+        # both secrets. Every widening below must fail closed.
+        self._verify()
+        mutations = (
+            (
+                "omit App ID contract",
+                "      static_ui_bridge_app_id:",
+                "      static_ui_bridge_app_id_omitted:",
+            ),
+            (
+                "omit private-key contract",
+                "      static_ui_bridge_app_private_key:",
+                "      static_ui_bridge_app_private_key_omitted:",
+            ),
+            (
+                "require App secret for every caller",
+                "        required: false",
+                "        required: true",
+            ),
+            (
+                "float token action",
+                (
+                    "actions/create-github-app-token@"
+                    "d72941d797fd3113feb6b93fd0dec494b13a2547"
+                ),
+                "actions/create-github-app-token@main",
+            ),
+            (
+                "widen owner",
+                "          owner: cognitum-one",
+                "          owner: attacker",
+            ),
+            (
+                "widen repositories",
+                "            website\n            beacon",
+                "            website\n            beacon\n            management",
+            ),
+            (
+                "omit website repository",
+                "            website\n            beacon",
+                "            beacon",
+            ),
+            (
+                "widen contents permission",
+                "          permission-contents: read",
+                "          permission-contents: write",
+            ),
+            (
+                "add unrelated permission",
+                "          permission-contents: read",
+                "          permission-contents: read\n          permission-issues: write",
+            ),
+            (
+                "expand App ID into runtime",
+                (
+                    "          STATIC_UI_BRIDGE_TOKEN: "
+                    "${{ steps.static-ui-bridge-token.outputs.token }}"
+                ),
+                (
+                    "          STATIC_UI_BRIDGE_TOKEN: "
+                    "${{ secrets.static_ui_bridge_app_id }}"
+                ),
+            ),
+            (
+                "expand private key into Beacon checkout",
+                (
+                    "          GH_TOKEN: "
+                    "${{ steps.static-ui-bridge-token.outputs.token }}"
+                ),
+                (
+                    "          GH_TOKEN: "
+                    "${{ secrets.static_ui_bridge_app_private_key }}"
+                ),
+            ),
+            (
+                "website token fallback",
+                (
+                    "          STATIC_UI_BRIDGE_TOKEN: "
+                    "${{ steps.static-ui-bridge-token.outputs.token }}"
+                ),
+                (
+                    "          STATIC_UI_BRIDGE_TOKEN: "
+                    "${{ steps.static-ui-bridge-token.outputs.token || github.token }}"
+                ),
+            ),
+            (
+                "management token expansion to website",
+                (
+                    "          STATIC_UI_MANAGEMENT_TOKEN: "
+                    "${{ github.repository == 'cognitum-one/management' "
+                    "&& github.token || '' }}"
+                ),
+                (
+                    "          STATIC_UI_MANAGEMENT_TOKEN: "
+                    "${{ github.repository == 'cognitum-one/website' "
+                    "&& github.token || '' }}"
+                ),
+            ),
+        )
+        for name, old, new in mutations:
+            with self.subTest(mutation=name):
+                with self.assertRaises(WorkflowPolicyError):
+                    self._verify(self._mutate("security", old, new))
+
     def test_security_caller_template_cannot_float_or_omit_beacon_token(self) -> None:
         pin_match = re.search(
             r"security-scan\.yml@([0-9a-f]{40})",
