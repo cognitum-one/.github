@@ -296,7 +296,29 @@ def run_osv_scan(
             raise ScanBoundaryError(
                 "OSV scan reported no package sources but still produced a report"
             )
-        return {"results": []}
+        # Downstream consumers read the report FROM DISK rather than taking this
+        # return value -- the workflow runs `osv_gate.py` with OSV_REPORT set to
+        # the same path. Returning an empty payload without writing the file left
+        # the gate failing with "OSV JSON is missing, malformed, or unsafe", so
+        # emit a well-formed empty report instead of teaching every consumer
+        # about this status. Written only after the absence check above, so the
+        # contradiction it guards against is still detected.
+        empty_report: dict[str, Any] = {"results": []}
+        try:
+            with open(
+                machine_report,
+                "x",
+                encoding="utf-8",
+                opener=lambda path, flags: os.open(
+                    path, flags | os.O_NOFOLLOW, 0o600
+                ),
+            ) as handle:
+                json.dump(empty_report, handle)
+        except OSError as error:
+            raise ScanBoundaryError(
+                f"OSV empty report could not be written: {error}"
+            ) from error
+        return empty_report
     payload = _load_report(machine_report, repository_root=root)
     vulnerability_count = _vulnerability_count(payload)
     if (machine_status == 1) != (vulnerability_count > 0):
