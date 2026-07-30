@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import stat
 from types import SimpleNamespace
 import sys
 import tempfile
@@ -267,6 +268,27 @@ class RunOsvScanTest(unittest.TestCase):
         payload = self.run_scan(runner)
         self.assertEqual(payload, {"results": []})
         self.assertEqual(len(runner.calls), 2)
+
+    def test_no_package_sources_still_writes_a_report_for_downstream_readers(
+        self,
+    ) -> None:
+        # THE INTEGRATION THIS FILE PREVIOUSLY MISSED. osv_gate.py reads the
+        # report from disk via OSV_REPORT rather than taking this function's
+        # return value, so returning an empty payload without writing the file
+        # left the gate failing with "OSV JSON is missing, malformed, or unsafe".
+        runner = RecordingRunner(
+            statuses=(NO_PACKAGE_SOURCES_STATUS, NO_PACKAGE_SOURCES_STATUS),
+            report_mode="missing",
+        )
+        self.run_scan(runner)
+        self.assertTrue(self.report.is_file())
+        self.assertFalse(self.report.is_symlink())
+        self.assertEqual(
+            json.loads(self.report.read_text(encoding="utf-8")),
+            {"results": []},
+        )
+        # Readable only by the owner, like any other artifact this wrapper emits.
+        self.assertEqual(stat.S_IMODE(self.report.stat().st_mode), 0o600)
 
     def test_no_package_sources_that_still_wrote_a_report_fails_closed(self) -> None:
         # Contradictory signals: the scanner claims nothing was scannable yet
