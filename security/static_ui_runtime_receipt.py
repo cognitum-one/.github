@@ -2275,7 +2275,16 @@ def verify_receipt(
         "buildMaterialization": receipt_build["buildSecret"],
     }
     if actual != expected:
-        raise PolicyError("receipt replay-binding tuple differs")
+        # Report only field names, never values. This keeps the receipt
+        # fail-closed while making live reusable-workflow drift diagnosable
+        # without exposing repository, runtime, nonce, or build evidence.
+        differing_fields = sorted(
+            field for field in expected if actual.get(field) != expected[field]
+        )
+        raise PolicyError(
+            "receipt replay-binding tuple differs: "
+            + ", ".join(differing_fields)
+        )
     assertions = receipt.get("assertions")
     if (
         not isinstance(assertions, dict)
