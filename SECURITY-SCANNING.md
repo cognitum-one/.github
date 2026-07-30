@@ -84,7 +84,15 @@ It in turn:
   inventory, independently generated nonce, image name, image config digest,
   and complete GitHub replay tuple to the OSV exception gate;
 - treats a missing, invalid, or failed machine-readable OSV result as a failed
-  security gate.
+  security gate;
+- passes a repository that has no dependency manifests at all. `osv-scanner`
+  exits `128` with `No package sources found` in that case, which is the correct
+  answer for a documentation repository rather than a scan failure. The wrapper
+  accepts `128` **only** when both the human-readable and machine-readable
+  invocations return it *and* no report file was produced; if a report exists the
+  two signals contradict each other and the gate fails closed. Every other
+  non-zero status — `127`, `129`, a negative code, or a missing one — still fails,
+  so a general scanner error cannot be mistaken for an empty repository.
 
 Version inputs are intentionally unsupported: changing a scanner requires a
 reviewed workflow commit that updates both its version and digest. The

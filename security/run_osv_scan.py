@@ -22,6 +22,13 @@ from typing import Any, Callable, Sequence
 
 OSV_SCANNER_VERSION = "2.2.4"
 MAX_REPORT_BYTES = 512 * 1024 * 1024
+# osv-scanner 2.2.4 exits 128 with "No package sources found" when the tree it is
+# pointed at contains nothing it can parse. A repository with no dependency
+# manifests -- a documentation repository -- is legitimately in that state, and
+# treating it as a scan failure makes the dependency gate unsatisfiable there.
+# This status is accepted ONLY when no report was produced (see run_osv_scan);
+# anything that looks like a scan which actually ran still fails closed.
+NO_PACKAGE_SOURCES_STATUS = 128
 SCAN_PREFIX = (
     "scan",
     "source",
@@ -173,7 +180,7 @@ def _invoke(
     except (OSError, subprocess.SubprocessError) as error:
         raise ScanBoundaryError(f"{label} OSV scan could not run: {error}") from error
     status = getattr(completed, "returncode", None)
-    if status not in (0, 1):
+    if status not in (0, 1, NO_PACKAGE_SOURCES_STATUS):
         raise ScanBoundaryError(
             f"{label} OSV scan failed with unsupported status {status!r}"
         )
@@ -279,6 +286,17 @@ def run_osv_scan(
         raise ScanBoundaryError(
             "human-readable and machine-readable OSV scan statuses disagree"
         )
+    if machine_status == NO_PACKAGE_SOURCES_STATUS:
+        # Both invocations agree there was nothing to scan. Accept that as a pass
+        # rather than a failure -- but only if the scanner genuinely produced no
+        # report. If a report exists here the two signals contradict each other,
+        # and the safe reading is that the scan did run and something else went
+        # wrong, so fail closed instead of returning an empty result set.
+        if machine_report.exists() or machine_report.is_symlink():
+            raise ScanBoundaryError(
+                "OSV scan reported no package sources but still produced a report"
+            )
+        return {"results": []}
     payload = _load_report(machine_report, repository_root=root)
     vulnerability_count = _vulnerability_count(payload)
     if (machine_status == 1) != (vulnerability_count > 0):

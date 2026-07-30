@@ -11,6 +11,7 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from run_osv_scan import (
+    NO_PACKAGE_SOURCES_STATUS,
     SCAN_PREFIX,
     ScanBoundaryError,
     build_scan_commands,
@@ -242,11 +243,60 @@ class RunOsvScanTest(unittest.TestCase):
         self.assertEqual(len(runner.calls), 1)
         self.assertFalse(self.report.exists())
 
-    def test_machine_scan_accepts_only_status_zero_or_one(self) -> None:
-        for status in (-1, 2, 127, None):
+    def test_machine_scan_accepts_only_status_zero_one_or_no_package_sources(
+        self,
+    ) -> None:
+        # 128 is now accepted (see the no-package-sources tests below); 127 and
+        # the rest must still fail closed, so a general scanner error cannot be
+        # mistaken for an empty repository.
+        for status in (-1, 2, 127, 129, None):
             with self.subTest(status=status):
                 runner = RecordingRunner(statuses=(0, status))
                 with self.assertRaises(ScanBoundaryError):
+                    self.run_scan(runner)
+                if self.report.exists() or self.report.is_symlink():
+                    self.report.unlink()
+
+    def test_no_package_sources_passes_with_an_empty_result_set(self) -> None:
+        # A repository with no dependency manifests must PASS the dependency
+        # gate. osv-scanner exits 128 and writes no report in that case.
+        runner = RecordingRunner(
+            statuses=(NO_PACKAGE_SOURCES_STATUS, NO_PACKAGE_SOURCES_STATUS),
+            report_mode="missing",
+        )
+        payload = self.run_scan(runner)
+        self.assertEqual(payload, {"results": []})
+        self.assertEqual(len(runner.calls), 2)
+
+    def test_no_package_sources_that_still_wrote_a_report_fails_closed(self) -> None:
+        # Contradictory signals: the scanner claims nothing was scannable yet
+        # produced output. Do not return an empty result set on that basis.
+        runner = RecordingRunner(
+            statuses=(NO_PACKAGE_SOURCES_STATUS, NO_PACKAGE_SOURCES_STATUS),
+            report_payload={"results": [{"packages": [{"vulnerabilities": [{}]}]}]},
+        )
+        with self.assertRaisesRegex(
+            ScanBoundaryError,
+            "no package sources but still produced a report",
+        ):
+            self.run_scan(runner)
+        if self.report.exists() or self.report.is_symlink():
+            self.report.unlink()
+
+    def test_no_package_sources_must_agree_across_both_invocations(self) -> None:
+        # One invocation finding nothing while the other finds something is a
+        # disagreement, not an empty repository.
+        for statuses in (
+            (0, NO_PACKAGE_SOURCES_STATUS),
+            (NO_PACKAGE_SOURCES_STATUS, 0),
+            (1, NO_PACKAGE_SOURCES_STATUS),
+            (NO_PACKAGE_SOURCES_STATUS, 1),
+        ):
+            with self.subTest(statuses=statuses):
+                runner = RecordingRunner(statuses=statuses, report_mode="missing")
+                with self.assertRaisesRegex(
+                    ScanBoundaryError, "statuses disagree"
+                ):
                     self.run_scan(runner)
                 if self.report.exists() or self.report.is_symlink():
                     self.report.unlink()
