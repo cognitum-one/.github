@@ -382,29 +382,32 @@ class StaticUiWorkflowPolicyTests(unittest.TestCase):
                     self._verify(sources)
 
     def test_organization_policy_cannot_be_rolled_back_as_a_quorum(self) -> None:
-        sources = copy.deepcopy(self.sources)
-        for target in ("security", "release", "revision"):
-            sources[target] = sources[target].replace(
-                "77c258c2dc95974970b4e7a35a1b2e415a8796e9",
-                "1" * 40,
-                1,
-            )
-        with self.assertRaisesRegex(
-            WorkflowPolicyError, "approved organization policy"
+        # The approved values are DERIVED from EXPECTED_ORG_POLICY rather than
+        # written out again. Previously they were duplicated literals, so a
+        # legitimate pin bump turned each `.replace()` into a silent no-op and the
+        # test passed while asserting nothing -- it failed only because the
+        # expected error stopped being raised, which is the lucky failure mode.
+        for name, replacement in (
+            ("OSV_POLICY_COMMIT", "1" * 40),
+            ("STATIC_UI_RECEIPT_SHA256", "2" * 64),
         ):
-            self._verify(sources)
-
-        sources = copy.deepcopy(self.sources)
-        for target in ("security", "release", "revision"):
-            sources[target] = sources[target].replace(
-                "09fe7efecd17bad3867b390557b8c8f000968299f74d96d258fcc975876a8f5c",
-                "2" * 64,
-                1,
-            )
-        with self.assertRaisesRegex(
-            WorkflowPolicyError, "approved organization policy"
-        ):
-            self._verify(sources)
+            approved = EXPECTED_ORG_POLICY[name]
+            with self.subTest(policy=name):
+                sources = copy.deepcopy(self.sources)
+                for target in ("security", "release", "revision"):
+                    # Guard the substitution itself: if the approved value is not
+                    # present in a workflow the rollback is not being simulated,
+                    # and the assertion below would be vacuous.
+                    self.assertIn(approved, sources[target])
+                    sources[target] = sources[target].replace(
+                        approved,
+                        replacement,
+                        1,
+                    )
+                with self.assertRaisesRegex(
+                    WorkflowPolicyError, "approved organization policy"
+                ):
+                    self._verify(sources)
 
     def test_policy_commit_contains_the_exact_hash_verified_artifacts(self) -> None:
         policy_commit = EXPECTED_ORG_POLICY["OSV_POLICY_COMMIT"]
