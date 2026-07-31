@@ -23,7 +23,7 @@
       "dockerignore": ".dockerignore",
       "packagingFiles": {
         ".dockerignore": "2363babe3be98f66da6c87bfcc8e55b60a7bd301924a3ed9a52a2b4f634ea90a",
-        "Dockerfile": "e94f37c4ddfa0fb5c382e91bee684c492bcd5172d38edf4ca7a56c1d4636c680",
+        "Dockerfile": "c85b17a0fc6763e46580acf86fecd1130406aa18bf9982662673c9859f1beda1",
         "config/frontend-build-secret-versions.json": "530b3a0a63f2deb15647b4da796f97180f6bfb8bc3516ce14744357d9119556c",
         "config/runtime-api-routes.allowlist": "2cbd390ff49481625bcef80221135244f367c6230f8636dda45d55774911b55f",
         "nginx.conf": "52dab0a2216b2bba4959e89d0305f18c685420d86cc2633aef78b9e5ecda1550",
@@ -33,7 +33,7 @@
         "scripts/read-frontend-build-secret-versions.mjs": "508345be98ab8c0b3e98f3b22951d8f0d0452ffe5f1d750df44c7e3768fbc5eb",
         "scripts/validate-frontend-build-env.mjs": "b0491581ef0825220825f5bdf2c41915cd6b82d738e3d5ea71392470103424f4",
         "scripts/validate-management-ui-container-contract-selftest.mjs": "168a6b09ef8e1e39f167f6927720a6210115a50e62432b2f0fd9d45293e8bacb",
-        "scripts/validate-management-ui-container-contract.mjs": "f579f03d569b82a36050cd254bcae1e74975049671aacb9b71bcb3a7d49b76ed",
+        "scripts/validate-management-ui-container-contract.mjs": "dc7feb16d5e4f49f00dd757b074c3948c37dc54f4a2b0179b56991564a38c82f",
         "scripts/validate-runtime-routing.sh": "0272998fdf05810a76b9ebc0b2142bf264f8a88b808e600f88cabc8664104bdc",
         "scripts/write-env-production-selftest.mjs": "44b563e26a1242dc8739d9420e6dd13999b67174d5ee9f201169af34d3ca8f88",
         "vite.config.ts": "4c4f519a73a21ad04966e65b8594b10d2e6111b6ce1c93cb2b794e15debe4528",
