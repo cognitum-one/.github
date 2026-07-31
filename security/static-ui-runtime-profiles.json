@@ -175,16 +175,16 @@
       "dockerfile": "Dockerfile",
       "dockerignore": ".dockerignore",
       "packagingFiles": {
-        ".dockerignore": "98af2b0b689d300d08e919076b189ba50aee50f300145fe14a9eab0be5683550",
+        ".dockerignore": "7439be2d499aabfa11782c2ceb24b159b188e13f9ffced8b14a42e4feea4e29b",
         ".gitmodules": "a3c1a981289be20d90156902ecdd3db26775798652389ffe1f900a25355a4800",
         "Dockerfile": "5893b01ff754dec66121b35fa8a30ba3d9fc8e5a2a26bb7d2faf44c7e2d8abc2",
         "config/frontend-runtime-config.json": "fc4347ead1b4ae59336e0727faddf2d249809e30b5cbc0814f9cf1db6e0c1a67",
         "docker-entrypoint.sh": "14b44204f83b8208fd09c53035edcb684193fe2298f34aa6b85fd8f2afdcb37e",
         "nginx.conf": "db577824ad8f7d44cab4cfa4e8c1fb41219eb19cba748eb389c78e078b66fab5",
-        "package-lock.json": "ff057db34a9d2ccd7771fce8db637fa64f1263f23587cda658687851125fa3f4",
-        "package.json": "655ecef0447541ce9e163824f7841f928cdc7920226f1c6c4553b0af2f161924",
+        "package-lock.json": "6d4a8a8be807d6a0838cf7c4269519102ee0d5d679fd68524059091ba7cc7434",
+        "package.json": "ecdf44769eb985614771c31e7c61d9a4219849a446ffd3f2267d1dc01447b9bb",
         "scripts/seal-runtime-config.mjs": "e40a83decfd3ce13645e391f64ee867b53e695f4c35490c39c7721e3e2f3f875",
-        "vite.config.ts": "30b0bbfcebc1ffef5d0a3b8a275881820800e17ed16c3ca156cdc8b6c892da4b"
+        "vite.config.ts": "0b906b3d28e929799455e38d351e55fad4e4798fe7e087679ded152d24ef9e9b"
       },
       "submodules": {
         "beacon": {
