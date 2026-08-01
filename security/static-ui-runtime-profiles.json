@@ -34,7 +34,7 @@
         "scripts/validate-frontend-build-env.mjs": "28d95f2d8c6f7a61caa7bcedde4a6f5758f622fc5de06200f69088094cc168f8",
         "scripts/validate-management-ui-container-contract-selftest.mjs": "168a6b09ef8e1e39f167f6927720a6210115a50e62432b2f0fd9d45293e8bacb",
         "scripts/validate-management-ui-container-contract.mjs": "dc7feb16d5e4f49f00dd757b074c3948c37dc54f4a2b0179b56991564a38c82f",
-        "scripts/validate-runtime-routing.sh": "2701a6307160dda3b868901b582475f2cdf32871df41379b85dc7aed8447bf62",
+        "scripts/validate-runtime-routing.sh": "83fa43b573db04add1218cb57564535d6daeec15285f9aae61da56cd75728ec0",
         "scripts/write-env-production-selftest.mjs": "e683a3f79442f0ba4f60dbd6c2a19e31b38751cafca1124815b731ec5e9e59e8",
         "vite.config.ts": "4c4f519a73a21ad04966e65b8594b10d2e6111b6ce1c93cb2b794e15debe4528",
         "write-env-production.sh": "fc3bac2d10a38c693c46f8161d425a280d74d55c0f6f9b7fb974ab8b19ce37ae"
