@@ -30,14 +30,14 @@
         "package-lock.json": "bfe201ae0ae4412633948eea2e7163faac4bcbbdfa148b04d57bb0d2ab336f53",
         "package.json": "9e3a2b1352994961bf3b93aa02a03012251d5f7268359a1863ed8487ca6dd85a",
         "runtime-config-entrypoint.sh": "d9037d95a20ee15ab369f7cd7e00080a29e047195bb44dafb63cb2c441809ec5",
-        "scripts/read-frontend-build-secret-versions.mjs": "508345be98ab8c0b3e98f3b22951d8f0d0452ffe5f1d750df44c7e3768fbc5eb",
-        "scripts/validate-frontend-build-env.mjs": "b0491581ef0825220825f5bdf2c41915cd6b82d738e3d5ea71392470103424f4",
+        "scripts/read-frontend-build-secret-versions.mjs": "dc1b190ea923b86b132bd3d9949ccbe535a990a2b8e0596fb09cd6b329bf332d",
+        "scripts/validate-frontend-build-env.mjs": "28d95f2d8c6f7a61caa7bcedde4a6f5758f622fc5de06200f69088094cc168f8",
         "scripts/validate-management-ui-container-contract-selftest.mjs": "168a6b09ef8e1e39f167f6927720a6210115a50e62432b2f0fd9d45293e8bacb",
         "scripts/validate-management-ui-container-contract.mjs": "dc7feb16d5e4f49f00dd757b074c3948c37dc54f4a2b0179b56991564a38c82f",
         "scripts/validate-runtime-routing.sh": "2701a6307160dda3b868901b582475f2cdf32871df41379b85dc7aed8447bf62",
-        "scripts/write-env-production-selftest.mjs": "44b563e26a1242dc8739d9420e6dd13999b67174d5ee9f201169af34d3ca8f88",
+        "scripts/write-env-production-selftest.mjs": "e683a3f79442f0ba4f60dbd6c2a19e31b38751cafca1124815b731ec5e9e59e8",
         "vite.config.ts": "4c4f519a73a21ad04966e65b8594b10d2e6111b6ce1c93cb2b794e15debe4528",
-        "write-env-production.sh": "d11e3196859373bf1ab4177bfe6352acef67a121e5a06d6f7af91d75c566a622"
+        "write-env-production.sh": "fc3bac2d10a38c693c46f8161d425a280d74d55c0f6f9b7fb974ab8b19ce37ae"
       },
       "submodules": {},
       "buildSecret": {
