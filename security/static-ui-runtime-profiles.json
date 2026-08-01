@@ -25,7 +25,7 @@
         ".dockerignore": "2363babe3be98f66da6c87bfcc8e55b60a7bd301924a3ed9a52a2b4f634ea90a",
         "Dockerfile": "c85b17a0fc6763e46580acf86fecd1130406aa18bf9982662673c9859f1beda1",
         "config/frontend-build-secret-versions.json": "530b3a0a63f2deb15647b4da796f97180f6bfb8bc3516ce14744357d9119556c",
-        "config/runtime-api-routes.allowlist": "2cbd390ff49481625bcef80221135244f367c6230f8636dda45d55774911b55f",
+        "config/runtime-api-routes.allowlist": "19fa02f66dbea996d78578c7270ed7f7e81d07027b3f49a7c7669dc35bfcfdc6",
         "nginx.conf": "0ae0c3079604511c5712a35c84f8500a9a30988dbc57d98ad178a70f4fcbf996",
         "package-lock.json": "bfe201ae0ae4412633948eea2e7163faac4bcbbdfa148b04d57bb0d2ab336f53",
         "package.json": "9e3a2b1352994961bf3b93aa02a03012251d5f7268359a1863ed8487ca6dd85a",
