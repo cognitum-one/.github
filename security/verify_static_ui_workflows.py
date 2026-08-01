@@ -43,13 +43,13 @@ EXPECTED_ACTIONS = {
 }
 
 EXPECTED_ORG_POLICY = {
-    "OSV_POLICY_COMMIT": "9bb04388a3947fa877e412f7e406d691c5f9f413",
+    "OSV_POLICY_COMMIT": "f4f4ebec6a677cd86e6ae4258db3409c1ac6aa71",
     "OSV_GATE_SHA256": "669216fa6f6f106987e1d4e8ec6c3d5afd00c7a5cee364b90758960a8637d4ae",
     "OSV_GATE_TEST_SHA256": "60cda6a8aa55f30745af42685a994ef9eede17ac3149df89b7f030f266fe913e",
     "OSV_CONFIG_SHA256": "5bd10fc47448111e6d8bed4682b9b80e4c420ca6cb0808a252b8c6d8cd920c34",
     "OSV_RUNNER_SHA256": "f5d4c3e85e673d031bee763d7d516de07af420b727f8cdb9555748de9867e1a3",
     "OSV_RUNNER_TEST_SHA256": "46b266824f04d4caa84ed9afc1aed0020ef3ce986b7b2b0fd64a8a7f685549d3",
-    "STATIC_UI_PROFILES_SHA256": "52612f4a8c3d0f240117bc359b281fa0d316a729ce81a402cca88f6dab07b0d5",
+    "STATIC_UI_PROFILES_SHA256": "3d758bf6fe67fad855a7798522ff9686fa60ff2183a4cfcb5058ba76069b987a",
     "STATIC_UI_RECEIPT_SHA256": "09fe7efecd17bad3867b390557b8c8f000968299f74d96d258fcc975876a8f5c",
     "STATIC_UI_RECEIPT_TEST_SHA256": "8a9cbe75c4de66baeb1aae44486f611e1a4f04535ea251c493fd8c758ebee037",
 }
@@ -70,6 +70,18 @@ POLICY_ARTIFACTS = {
 
 class WorkflowPolicyError(ValueError):
     pass
+
+
+def verify_local_policy_artifacts(security_directory: Path) -> None:
+    for variable, filename in POLICY_ARTIFACTS.items():
+        if variable not in EXPECTED_ORG_POLICY:
+            continue
+        artifact = security_directory / filename
+        actual = hashlib.sha256(artifact.read_bytes()).hexdigest()
+        if actual != EXPECTED_ORG_POLICY[variable]:
+            raise WorkflowPolicyError(
+                f"approved organization policy hash differs from {filename}"
+            )
 
 
 def _read(path: Path, label: str) -> str:
@@ -1091,6 +1103,7 @@ def _parser() -> argparse.ArgumentParser:
 def main() -> int:
     arguments = _parser().parse_args()
     try:
+        verify_local_policy_artifacts(Path(__file__).resolve().parent)
         verify(
             security_path=arguments.security_workflow,
             release_path=arguments.release_workflow,
