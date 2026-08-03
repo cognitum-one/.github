@@ -178,7 +178,7 @@
         ".dockerignore": "7439be2d499aabfa11782c2ceb24b159b188e13f9ffced8b14a42e4feea4e29b",
         ".gitmodules": "a3c1a981289be20d90156902ecdd3db26775798652389ffe1f900a25355a4800",
         "Dockerfile": "5893b01ff754dec66121b35fa8a30ba3d9fc8e5a2a26bb7d2faf44c7e2d8abc2",
-        "config/frontend-runtime-config.json": "fc4347ead1b4ae59336e0727faddf2d249809e30b5cbc0814f9cf1db6e0c1a67",
+        "config/frontend-runtime-config.json": "cf5047fb9fd896b7a010a3db4e9e2cefdf4bea3fb773bf9a6d63b035308050fd",
         "docker-entrypoint.sh": "14b44204f83b8208fd09c53035edcb684193fe2298f34aa6b85fd8f2afdcb37e",
         "nginx.conf": "db577824ad8f7d44cab4cfa4e8c1fb41219eb19cba748eb389c78e078b66fab5",
         "package-lock.json": "6d4a8a8be807d6a0838cf7c4269519102ee0d5d679fd68524059091ba7cc7434",
