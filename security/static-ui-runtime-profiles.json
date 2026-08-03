@@ -181,7 +181,7 @@
         "config/frontend-runtime-config.json": "cf5047fb9fd896b7a010a3db4e9e2cefdf4bea3fb773bf9a6d63b035308050fd",
         "docker-entrypoint.sh": "14b44204f83b8208fd09c53035edcb684193fe2298f34aa6b85fd8f2afdcb37e",
         "nginx.conf": "16bf79fb7ff4352c0648fe0f91c442ff1a36bc07d1d67143214c6c74b555541e",
-        "package-lock.json": "d7d2aa6864bebd3d88ca50f3090c5cb652993a3ba3483e0ff95d48dba539ddd9",
+        "package-lock.json": "8ccdae22df2c51a277cdc6cb8584d463a1cc7f09c8e166f024742ede0ce86162",
         "package.json": "ecdf44769eb985614771c31e7c61d9a4219849a446ffd3f2267d1dc01447b9bb",
         "scripts/seal-runtime-config.mjs": "e40a83decfd3ce13645e391f64ee867b53e695f4c35490c39c7721e3e2f3f875",
         "vite.config.ts": "0b906b3d28e929799455e38d351e55fad4e4798fe7e087679ded152d24ef9e9b"
