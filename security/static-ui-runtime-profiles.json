@@ -180,7 +180,7 @@
         "Dockerfile": "5893b01ff754dec66121b35fa8a30ba3d9fc8e5a2a26bb7d2faf44c7e2d8abc2",
         "config/frontend-runtime-config.json": "cf5047fb9fd896b7a010a3db4e9e2cefdf4bea3fb773bf9a6d63b035308050fd",
         "docker-entrypoint.sh": "14b44204f83b8208fd09c53035edcb684193fe2298f34aa6b85fd8f2afdcb37e",
-        "nginx.conf": "db577824ad8f7d44cab4cfa4e8c1fb41219eb19cba748eb389c78e078b66fab5",
+        "nginx.conf": "f8b4f49a09183556ae063d06e331cb3d5c78c39dd073485d47c7761b27b70b31",
         "package-lock.json": "6d4a8a8be807d6a0838cf7c4269519102ee0d5d679fd68524059091ba7cc7434",
         "package.json": "ecdf44769eb985614771c31e7c61d9a4219849a446ffd3f2267d1dc01447b9bb",
         "scripts/seal-runtime-config.mjs": "e40a83decfd3ce13645e391f64ee867b53e695f4c35490c39c7721e3e2f3f875",
