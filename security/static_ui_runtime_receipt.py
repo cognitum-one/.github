@@ -101,7 +101,7 @@ APPLICABILITY_EXCEPTION = {
     "advisory": "GHSA-qwww-vcr4-c8h2",
     "package": "react-router",
     "version": "7.18.2",
-    "expiresExclusiveUtc": "2026-08-15",
+    "expiresExclusiveUtc": "2026-11-15",
     "maintainerAdvisoryUrl": (
         "https://github.com/remix-run/react-router/security/advisories/"
         "GHSA-qwww-vcr4-c8h2"
