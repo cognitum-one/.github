@@ -27,7 +27,7 @@
         "config/frontend-build-secret-versions.json": "530b3a0a63f2deb15647b4da796f97180f6bfb8bc3516ce14744357d9119556c",
         "config/runtime-api-routes.allowlist": "19fa02f66dbea996d78578c7270ed7f7e81d07027b3f49a7c7669dc35bfcfdc6",
         "nginx.conf": "0ae0c3079604511c5712a35c84f8500a9a30988dbc57d98ad178a70f4fcbf996",
-        "package-lock.json": "918cbade889811c443b14633b68e7a16ae31e7cf455af4fb8df25c999a286f89",
+        "package-lock.json": "b7760d3c127c9cf0d90f3d23adabe42dca211c72ed3923debeaf75600b565485",
         "package.json": "424203127c217cc9dae538721fdec6b14bacd2c1dd45dd9c2cadcb8f0f4604fd",
         "runtime-config-entrypoint.sh": "d9037d95a20ee15ab369f7cd7e00080a29e047195bb44dafb63cb2c441809ec5",
         "scripts/read-frontend-build-secret-versions.mjs": "dc1b190ea923b86b132bd3d9949ccbe535a990a2b8e0596fb09cd6b329bf332d",
