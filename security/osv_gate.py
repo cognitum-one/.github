@@ -22,7 +22,7 @@ from typing import Any
 
 ROUTER_ADVISORY = "GHSA-qwww-vcr4-c8h2"
 ROUTER_VERSION = "7.18.2"
-ROUTER_EXCEPTION_EXPIRES = dt.date(2026, 8, 15)
+ROUTER_EXCEPTION_EXPIRES = dt.date(2026, 11, 15)
 ROUTER_LOCKS = {
     ("cognitum-one/management", "management-ui/package-lock.json"),
     ("cognitum-one/website", "package-lock.json"),
