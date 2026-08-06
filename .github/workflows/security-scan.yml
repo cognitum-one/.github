@@ -19,7 +19,7 @@ name: security-scan
 # which the maintainer identifies as patched while OSV still models as affected.
 # It applies only to two reviewed repository/lockfile pairs, requires exact locked
 # router + router-dom versions, an exact root dependency, and no RSC package,
-# script, condition, import, or nested router surface. It expires 2026-08-15 UTC.
+# script, condition, import, or nested router surface. It expires 2026-11-15 UTC.
 # Every mismatch or expiry fails closed. The scanner always uses a hash-verified
 # organization config outside the candidate, disables candidate .gitignore
 # filtering, and emits its report outside the candidate. The correction, scan
@@ -49,8 +49,8 @@ env:
   GITLEAKS_CONFIG_SHA256: "e6a9129918378cc14f34db402edc1fab2884581b9a9d3ff8dcf280bd4903d1e8"
   OSV_VERSION: "2.2.4"
   OSV_LINUX_AMD64_SHA256: "7702cd1e5d9f5059dd9570f4ad967f27d3c5f5391b371ec937b384c238177f55"
-  OSV_POLICY_COMMIT: "f05ed13b91be42550d139ff2c0161e7e5af4c73d"
-  OSV_GATE_SHA256: "669216fa6f6f106987e1d4e8ec6c3d5afd00c7a5cee364b90758960a8637d4ae"
+  OSV_POLICY_COMMIT: "2ec922269f898f45dd3337d283035c4ec4f39026"
+  OSV_GATE_SHA256: "ce562120755386650bb2688851f11444cd921aea100447f2ab8952a0b74d8556"
   OSV_GATE_TEST_SHA256: "60cda6a8aa55f30745af42685a994ef9eede17ac3149df89b7f030f266fe913e"
   OSV_CONFIG_SHA256: "5bd10fc47448111e6d8bed4682b9b80e4c420ca6cb0808a252b8c6d8cd920c34"
   OSV_RUNNER_SHA256: "f5d4c3e85e673d031bee763d7d516de07af420b727f8cdb9555748de9867e1a3"
