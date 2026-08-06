@@ -151,7 +151,7 @@ affected. The correction is intentionally narrower than a general allowlist:
   Vite configuration must contain no RSC dependency, condition, entry point,
   or unstable API surface;
 - only that advisory/package/version tuple is corrected;
-- the correction expires at the start of `2026-08-15` UTC.
+- the correction expires at the start of `2026-11-15` UTC.
 
 Wrong repositories, paths, versions, dependency ranges, nested copies,
 advisory IDs, RSC surfaces, symlinks, oversized/unreadable source, duplicate
