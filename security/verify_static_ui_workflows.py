@@ -34,7 +34,7 @@ EXPECTED_BUILDX_URL = (
 
 EXPECTED_ACTIONS = {
     "actions/attest": "f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6",
-    "actions/checkout": "11d5960a326750d5838078e36cf38b85af677262",
+    "actions/checkout": "fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09",
     "actions/create-github-app-token": "d72941d797fd3113feb6b93fd0dec494b13a2547",
     "actions/upload-artifact": "043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
     "docker/setup-buildx-action": "8d2750c68a42422c14e847fe6c8ac0403b4cbd6f",

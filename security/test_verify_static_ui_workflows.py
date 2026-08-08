@@ -645,7 +645,7 @@ class StaticUiWorkflowPolicyTests(unittest.TestCase):
     def test_all_third_party_actions_remain_full_sha_pinned(self) -> None:
         sources = self._mutate(
             "security",
-            "actions/checkout@11d5960a326750d5838078e36cf38b85af677262",
+            "actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09",
             "actions/checkout@main",
         )
         with self.assertRaisesRegex(WorkflowPolicyError, "full SHA"):
