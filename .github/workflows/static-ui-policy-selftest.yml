@@ -34,6 +34,14 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Fetch the exact pinned organization policy commit
+        run: |
+          set -euo pipefail
+          policy_commit="$(sed -n 's/^  OSV_POLICY_COMMIT: "\([0-9a-f]\{40\}\)"$/\1/p' .github/workflows/security-scan.yml)"
+          test -n "$policy_commit"
+          git fetch --no-tags --depth=1 origin "$policy_commit"
+          git cat-file -e "${policy_commit}^{commit}"
+
       - name: Run every organization policy test directly
         run: |
           set -euo pipefail
