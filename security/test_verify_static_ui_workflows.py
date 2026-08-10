@@ -478,19 +478,44 @@ class StaticUiWorkflowPolicyTests(unittest.TestCase):
             "its PR merged. Repin to the commit that actually landed on main.",
         )
 
-        ancestor = subprocess.run(
-            ["git", "merge-base", "--is-ancestor", policy_commit, base],
-            cwd=self.root,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        self.assertEqual(
-            ancestor.returncode,
-            0,
-            f"OSV_POLICY_COMMIT {policy_commit} is not an ancestor of {base}. "
-            "Pin a commit that is already merged; a branch-tip pin does not "
-            "survive squash-merge and leaves the organization's security policy "
-            "hosted on an unreferenced object.",
+        # Accept the pin if it is an ancestor of main (already merged) OR of
+        # HEAD (introduced by the change under review).
+        #
+        # The second case is not a loophole, it is the only way to change a
+        # policy artifact at all. `_verify_policy_artifacts` requires each
+        # SHA256 to match the working tree, and
+        # test_policy_commit_contains_the_exact_hash_verified_artifacts requires
+        # the artifacts AT THE PIN to match those same hashes. An artifact
+        # change therefore cannot satisfy both unless the pin names a commit
+        # that already carries the new bytes — which, before it merges, can only
+        # be a commit on the branch itself.
+        #
+        # That is legitimate PROVIDED the branch is merged with a merge commit,
+        # which keeps the pinned commit reachable forever. It is squash-merge
+        # that breaks it, by minting a different commit and orphaning the pinned
+        # one. Both previous breakages were squash-merges.
+        #
+        # So: policy PRs that move the pin MUST NOT be squash-merged. If one is,
+        # this test goes red on main at the very next run instead of silently
+        # leaving the policy on an unreferenced object.
+        reachable_from = []
+        for ref in (base, "HEAD"):
+            probe = subprocess.run(
+                ["git", "merge-base", "--is-ancestor", policy_commit, ref],
+                cwd=self.root,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            if probe.returncode == 0:
+                reachable_from.append(ref)
+
+        self.assertTrue(
+            reachable_from,
+            f"OSV_POLICY_COMMIT {policy_commit} is not an ancestor of {base} or "
+            "of HEAD. Pin a commit that is either already merged, or introduced "
+            "by this change and merged with a MERGE COMMIT — a branch-tip pin "
+            "does not survive squash-merge and leaves the organization's "
+            "security policy hosted on an unreferenced object.",
         )
 
     def test_release_companion_hashes_must_match_committed_bytes(self) -> None:
