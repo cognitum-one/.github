@@ -431,6 +431,68 @@ class StaticUiWorkflowPolicyTests(unittest.TestCase):
                     EXPECTED_ORG_POLICY[environment_name],
                 )
 
+    def test_policy_commit_is_already_merged_to_the_default_branch(self) -> None:
+        # The pin must name a commit that is an ANCESTOR of the default branch,
+        # not merely one git can resolve today.
+        #
+        # Resolvability is not enough, and that gap has now bitten twice. A pin
+        # taken from a PR's own branch tip resolves perfectly while the PR is
+        # open, so every check passes; squash-merging then mints a different
+        # commit and deleting the branch orphans the pinned one. It survives
+        # only as an unreferenced object that raw.githubusercontent still serves,
+        # so consumers keep working right up until GitHub garbage-collects it,
+        # at which point every repository using the shared workflow fails its
+        # policy download at once.
+        #
+        # ebd06a70 (2026-08-09) and f2b140c7 (2026-08-10) were both orphaned
+        # exactly this way, on consecutive policy changes. Asserting ancestry
+        # fails while the offending PR is still open, which is the only point
+        # at which it is cheap to fix.
+        policy_commit = EXPECTED_ORG_POLICY["OSV_POLICY_COMMIT"]
+
+        base = None
+        for candidate in ("origin/main", "main"):
+            probe = subprocess.run(
+                ["git", "rev-parse", "--verify", "--quiet", f"{candidate}^{{commit}}"],
+                cwd=self.root,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+            )
+            if probe.returncode == 0:
+                base = candidate
+                break
+        if base is None:
+            self.skipTest("no local main ref to check ancestry against")
+
+        resolvable = subprocess.run(
+            ["git", "cat-file", "-e", f"{policy_commit}^{{commit}}"],
+            cwd=self.root,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        self.assertEqual(
+            resolvable.returncode,
+            0,
+            f"OSV_POLICY_COMMIT {policy_commit} does not exist in this repository. "
+            "It is almost certainly a pre-squash branch tip that was orphaned when "
+            "its PR merged. Repin to the commit that actually landed on main.",
+        )
+
+        ancestor = subprocess.run(
+            ["git", "merge-base", "--is-ancestor", policy_commit, base],
+            cwd=self.root,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        self.assertEqual(
+            ancestor.returncode,
+            0,
+            f"OSV_POLICY_COMMIT {policy_commit} is not an ancestor of {base}. "
+            "Pin a commit that is already merged; a branch-tip pin does not "
+            "survive squash-merge and leaves the organization's security policy "
+            "hosted on an unreferenced object.",
+        )
+
     def test_release_companion_hashes_must_match_committed_bytes(self) -> None:
         sources = copy.deepcopy(self.sources)
         for target in ("release", "revision"):
