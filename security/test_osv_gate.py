@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import datetime as dt
 import json
 from pathlib import Path
@@ -16,6 +17,7 @@ from osv_gate import (
     ROUTER_PROFILES,
     RUNTIME_RECEIPT_EVIDENCE_ENVIRONMENT,
     RUNTIME_RECEIPT_GITHUB_ENVIRONMENT,
+    _format,
     _verified_runtime_receipt_from_environment,
     evaluate,
     main,
@@ -406,7 +408,12 @@ class OsvGateTest(unittest.TestCase):
                 self.assertEqual(blocking, [])
                 self.assertEqual(reviewed, [])
 
-    def test_fixable_missing_severity_fails_closed(self) -> None:
+    def test_fixable_missing_severity_blocks_as_an_unrated_finding(self) -> None:
+        # A fixable advisory OSV has not scored still blocks, but it is a
+        # FINDING, not a malformed report. It used to raise, which aborted the
+        # whole scan under the banner "OSV JSON is missing, malformed, or
+        # unsafe" — so the red was dismissed as tooling noise and three unrated
+        # rkyv memory-safety advisories went unactioned behind it.
         advisory = "RUSTSEC-2026-0190"
         severityless_groups = (
             [],
@@ -422,11 +429,56 @@ class OsvGateTest(unittest.TestCase):
                 advisory=advisory,
             )
             payload["results"][0]["packages"][0]["groups"] = groups
-            with (
-                self.subTest(groups=groups),
-                self.assertRaisesRegex(ValueError, "severity is missing"),
-            ):
-                self.evaluate(payload)
+            with self.subTest(groups=groups):
+                blocking, reviewed = self.evaluate(payload)
+                self.assertEqual(len(blocking), 1)
+                self.assertEqual(blocking[0][2], advisory)
+                self.assertIsNone(blocking[0][3], "unrated score must be None")
+                self.assertEqual(reviewed, [])
+
+    def test_one_unrated_advisory_does_not_hide_the_rest_of_the_scan(self) -> None:
+        # The abort this replaces stopped evaluation at the first unrated
+        # advisory, so nothing after it was ever reported. Every package must
+        # still be evaluated.
+        payload = report(
+            str(self.management_lock),
+            package="rkyv",
+            version="0.8.16",
+            advisory="RUSTSEC-2026-0233",
+        )
+        results_packages = payload["results"][0]["packages"]
+        results_packages[0]["groups"] = [
+            {"ids": ["RUSTSEC-2026-0233"], "max_severity": ""}
+        ]
+        rated = copy.deepcopy(results_packages[0])
+        rated["package"]["name"] = "scored-package"
+        rated["package"]["version"] = "1.0.0"
+        rated["vulnerabilities"][0]["id"] = "GHSA-scored-0001"
+        rated["groups"] = [{"ids": ["GHSA-scored-0001"], "max_severity": "9.8"}]
+        results_packages.append(rated)
+
+        blocking, reviewed = self.evaluate(payload)
+
+        self.assertEqual(reviewed, [])
+        advisories = {row[2] for row in blocking}
+        self.assertEqual(advisories, {"RUSTSEC-2026-0233", "GHSA-scored-0001"})
+        scores = {row[2]: row[3] for row in blocking}
+        self.assertIsNone(scores["RUSTSEC-2026-0233"])
+        self.assertEqual(scores["GHSA-scored-0001"], 9.8)
+
+    def test_unrated_findings_sort_first_and_render_without_a_score(self) -> None:
+        rows = [
+            ("scored", "1.0.0", "GHSA-low", 7.5, "Cargo.lock"),
+            ("unrated", "0.8.16", "RUSTSEC-2026-0233", None, "Cargo.lock"),
+            ("scored", "2.0.0", "GHSA-high", 9.8, "Cargo.lock"),
+        ]
+
+        lines = _format(rows)
+
+        self.assertIn("CVSS ?.?", lines[0])
+        self.assertIn("RUSTSEC-2026-0233", lines[0])
+        self.assertIn("CVSS 9.8", lines[1])
+        self.assertIn("CVSS 7.5", lines[2])
 
     def test_malformed_severity_fails_closed_even_without_a_fix(self) -> None:
         for fixed, raw_score in (
