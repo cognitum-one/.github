@@ -475,7 +475,23 @@ def evaluate(
                     continue
                 advisory_scores = severity.get(advisory)
                 if advisory in severity_missing or not advisory_scores:
-                    raise ValueError(f"OSV severity is missing for {advisory}")
+                    # A fixable advisory that OSV has not scored. This is NOT a
+                    # malformed report — OSV genuinely publishes some advisories
+                    # with no CVSS, and RustSec routinely does. It still blocks,
+                    # because an unrated vulnerability with a fix available is
+                    # not something to wave through; it is recorded as a finding
+                    # with an unknown score rather than raised as a parse error.
+                    #
+                    # It used to raise, which aborted the whole scan and printed
+                    # "OSV JSON is missing, malformed, or unsafe". That reads as
+                    # a scanner fault, so the red was written off as tooling
+                    # noise, and three unrated rkyv memory-safety advisories
+                    # (RUSTSEC-2026-0233/0234/0235, one a use-after-free, all
+                    # fixed in 0.8.17) sat unactioned behind it. Aborting also
+                    # meant no other package was evaluated, so nobody could see
+                    # what else the scan had found.
+                    blocking.append((name, version, advisory, None, source))
+                    continue
                 score = max(advisory_scores)
                 if score < 7.0:
                     continue
@@ -496,11 +512,20 @@ def evaluate(
     return blocking, reviewed
 
 
-def _format(rows: list[tuple[str, str, str, float, str]]) -> list[str]:
+def _format(rows: list[tuple[str, str, str, float | None, str]]) -> list[str]:
+    # Unrated findings sort first: an unknown score is not a low score, and it
+    # is the one an operator most needs to look at by hand.
     return [
-        "  CVSS %.1f  %s@%s  %s  (%s)" % (score, name, version, advisory, source or "?")
+        "  %s  %s@%s  %s  (%s)"
+        % (
+            "CVSS ?.?" if score is None else "CVSS %.1f" % score,
+            name,
+            version,
+            advisory,
+            source or "?",
+        )
         for name, version, advisory, score, source in sorted(
-            rows, key=lambda row: -row[3]
+            rows, key=lambda row: (row[3] is not None, -(row[3] or 0.0))
         )
     ]
 
@@ -537,11 +562,25 @@ def main() -> int:
         for line in _format(reviewed):
             print(line)
     if blocking:
-        print(
-            f"::error::{len(blocking)} High/Critical vulnerabilities WITH fixes available:"
-        )
+        unrated = sum(1 for row in blocking if row[3] is None)
+        rated = len(blocking) - unrated
+        summary = f"{len(blocking)} vulnerabilities WITH fixes available"
+        if unrated:
+            # Name the unrated ones explicitly. Reporting them as though they
+            # were CVSS>=7 would be a different lie from the one this replaced.
+            summary += f" ({rated} High/Critical, {unrated} unrated by OSV)"
+        else:
+            summary += " (High/Critical)"
+        print(f"::error::{summary}:")
         for line in _format(blocking):
             print(line)
+        if unrated:
+            print(
+                "::notice::Findings shown as CVSS ?.? have no severity published "
+                "by OSV. They are fixable, so they block. This is a real finding, "
+                "not a scanner or report fault — upgrade the package, or record "
+                "an explicit reviewed exception."
+            )
         return 1
     print("OK: no unreviewed High/Critical fixable vulnerabilities.")
     return 0
