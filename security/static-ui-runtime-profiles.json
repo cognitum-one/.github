@@ -24,20 +24,20 @@
       "packagingFiles": {
         ".dockerignore": "2363babe3be98f66da6c87bfcc8e55b60a7bd301924a3ed9a52a2b4f634ea90a",
         "Dockerfile": "c85b17a0fc6763e46580acf86fecd1130406aa18bf9982662673c9859f1beda1",
-        "config/frontend-build-secret-versions.json": "530b3a0a63f2deb15647b4da796f97180f6bfb8bc3516ce14744357d9119556c",
+        "config/frontend-build-secret-versions.json": "92280186632b8c899f0b80d53a039f7ad7fa24b2c695d9ea4dff5d50f1bf0463",
         "config/runtime-api-routes.allowlist": "314d62b492ebfdb8a6b1f6e210f3940c6519f2055f4413c0cde57df4f7001377",
         "nginx.conf": "a8c5adc06411c60e788404176843c7ee93829101e109ffa1ad1cc3bc137306f3",
         "package-lock.json": "1d9c3c00d839364375363fdde3f07a045c4a2799f3f648e3ea0a1bf6c2bcf916",
-        "package.json": "424203127c217cc9dae538721fdec6b14bacd2c1dd45dd9c2cadcb8f0f4604fd",
-        "runtime-config-entrypoint.sh": "d9037d95a20ee15ab369f7cd7e00080a29e047195bb44dafb63cb2c441809ec5",
-        "scripts/read-frontend-build-secret-versions.mjs": "dc1b190ea923b86b132bd3d9949ccbe535a990a2b8e0596fb09cd6b329bf332d",
-        "scripts/validate-frontend-build-env.mjs": "28d95f2d8c6f7a61caa7bcedde4a6f5758f622fc5de06200f69088094cc168f8",
+        "package.json": "655f8f4c0b1aea6bc2067cc572d5a1b9f84afb947286a47daa0359387f1b359c",
+        "runtime-config-entrypoint.sh": "d67e9c1cfe8be1e60f458a301fee67123eca4082e8dfe401706de61b6681c919",
+        "scripts/read-frontend-build-secret-versions.mjs": "f8746f2de2135c063e93b3fa201f17b17f639d14c9eb11ebaf0b721ebfea98b6",
+        "scripts/validate-frontend-build-env.mjs": "c23b7b75d731e70ebe235ebcd6c04bd0ace47106fe720c969e9a581752fc12fe",
         "scripts/validate-management-ui-container-contract-selftest.mjs": "168a6b09ef8e1e39f167f6927720a6210115a50e62432b2f0fd9d45293e8bacb",
         "scripts/validate-management-ui-container-contract.mjs": "dc7feb16d5e4f49f00dd757b074c3948c37dc54f4a2b0179b56991564a38c82f",
-        "scripts/validate-runtime-routing.sh": "39d15b1d98240928135f122d1430ac56fc458900d2ca69022851a093cba07f36",
-        "scripts/write-env-production-selftest.mjs": "e683a3f79442f0ba4f60dbd6c2a19e31b38751cafca1124815b731ec5e9e59e8",
+        "scripts/validate-runtime-routing.sh": "be35d431ec72ab933f599a3d7c451edf7b1f7cc39b8aae8852f6819041af4d94",
+        "scripts/write-env-production-selftest.mjs": "6ce692b17b56e716224c9dc2fb3050aad99c55428162d784078a7df619e4e2cf",
         "vite.config.ts": "4c4f519a73a21ad04966e65b8594b10d2e6111b6ce1c93cb2b794e15debe4528",
-        "write-env-production.sh": "fc3bac2d10a38c693c46f8161d425a280d74d55c0f6f9b7fb974ab8b19ce37ae"
+        "write-env-production.sh": "03bd16006710d3d0b4d78e91e56815778398a81b1cf08fcda2cf004b7284289d"
       },
       "submodules": {},
       "buildSecret": {
@@ -52,26 +52,20 @@
           "classification": "public-nonrelease",
           "variables": {
             "VITE_FIREBASE_API_KEY": "premerge-fixture-api-key",
-            "VITE_FIREBASE_APP_CHECK_SITE_KEY": "premerge-fixture-app-check-site-key",
-            "VITE_FIREBASE_APP_ID": "premerge-fixture-app-id",
             "VITE_FIREBASE_AUTH_DOMAIN": "premerge-fixture-auth.invalid",
             "VITE_FIREBASE_MESSAGING_SENDER_ID": "premerge-fixture-messaging-sender-id",
             "VITE_FIREBASE_PROJECT_ID": "premerge-fixture-project-id"
           },
-          "contentDigest": "sha256:ee8fed299c624eea5d1b8cb84df6a5ba7edd725c1abbdfc7b2bb66b1b3114818"
+          "contentDigest": "sha256:2b33642b5eddd8175dc4b15ec5606c88a2a567ad7263ce965d378af1151c4cd5"
         },
         "variables": {
           "VITE_FIREBASE_API_KEY": "FIREBASE_WEB_API_KEY",
-          "VITE_FIREBASE_APP_CHECK_SITE_KEY": "FIREBASE_APP_CHECK_MANAGEMENT_SITE_KEY",
-          "VITE_FIREBASE_APP_ID": "FIREBASE_APP_ID",
           "VITE_FIREBASE_AUTH_DOMAIN": "FIREBASE_AUTH_DOMAIN",
           "VITE_FIREBASE_MESSAGING_SENDER_ID": "FIREBASE_MESSAGING_SENDER_ID",
           "VITE_FIREBASE_PROJECT_ID": "FIREBASE_PROJECT_ID"
         },
         "versions": {
           "VITE_FIREBASE_API_KEY": 3,
-          "VITE_FIREBASE_APP_CHECK_SITE_KEY": 1,
-          "VITE_FIREBASE_APP_ID": 2,
           "VITE_FIREBASE_AUTH_DOMAIN": 1,
           "VITE_FIREBASE_MESSAGING_SENDER_ID": 1,
           "VITE_FIREBASE_PROJECT_ID": 1
@@ -124,6 +118,8 @@
         "configuredEnvironmentAllowlist": [
           "MANAGEMENT_API_BASE_URL",
           "MANAGEMENT_APP_ENV",
+          "MANAGEMENT_FIREBASE_APP_CHECK_SITE_KEY",
+          "MANAGEMENT_FIREBASE_APP_ID",
           "MANAGEMENT_FIREBASE_DATABASE_ID",
           "MANAGEMENT_FIREBASE_STORAGE_BUCKET"
         ],

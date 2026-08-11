@@ -741,7 +741,7 @@ class BuildSecretTest(unittest.TestCase):
             },
         }
         missing_secrets = (
-            "FIREBASE_APP_CHECK_MANAGEMENT_SITE_KEY",
+            "FIREBASE_WEB_API_KEY",
             "FIREBASE_MESSAGING_SENDER_ID",
         )
         with tempfile.TemporaryDirectory() as directory:
