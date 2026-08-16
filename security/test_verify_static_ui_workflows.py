@@ -23,7 +23,6 @@ from verify_static_ui_workflows import (
     EXPECTED_BUILDX_VERSION,
     EXPECTED_DOCKER_CONFIG,
     EXPECTED_ORG_POLICY,
-    INACTIVE_CANDIDATE_ORG_POLICY,
     POLICY_ARTIFACTS,
     WorkflowPolicyError,
     verify,
@@ -62,17 +61,14 @@ class StaticUiWorkflowPolicyTests(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory()
         self.directory = Path(self.temporary.name)
 
-    def test_inactive_profile_candidate_is_exact_and_not_yet_consumed(self) -> None:
-        candidate = INACTIVE_CANDIDATE_ORG_POLICY["STATIC_UI_PROFILES_SHA256"]
+    def test_active_profile_is_exact_and_consumed(self) -> None:
         active = EXPECTED_ORG_POLICY["STATIC_UI_PROFILES_SHA256"]
         actual = hashlib.sha256(
             (self.root / "security/static-ui-runtime-profiles.json").read_bytes()
         ).hexdigest()
-        self.assertNotEqual(candidate, active)
-        self.assertEqual(actual, candidate)
+        self.assertEqual(actual, active)
         for source in ("security", "release", "revision"):
             self.assertIn(active, self.sources[source])
-            self.assertNotIn(candidate, self.sources[source])
 
     def tearDown(self) -> None:
         self.temporary.cleanup()

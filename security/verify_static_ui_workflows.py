@@ -43,23 +43,15 @@ EXPECTED_ACTIONS = {
 }
 
 EXPECTED_ORG_POLICY = {
-    "OSV_POLICY_COMMIT": "78a843236525981919a82b9c83cb6fb62305844c",
+    "OSV_POLICY_COMMIT": "d623408f7ff76fae043821101e36569c4247390c",
     "OSV_GATE_SHA256": "78f72dd03b2513829c13c2a338e4dca44f39e5fabdaacee4e94dc5258199d2fa",
     "OSV_GATE_TEST_SHA256": "801d2ef72cc1905a34edbf54393a44e2deb88b492374fc35f6ba6d14cb58139c",
     "OSV_CONFIG_SHA256": "5bd10fc47448111e6d8bed4682b9b80e4c420ca6cb0808a252b8c6d8cd920c34",
     "OSV_RUNNER_SHA256": "f5d4c3e85e673d031bee763d7d516de07af420b727f8cdb9555748de9867e1a3",
     "OSV_RUNNER_TEST_SHA256": "46b266824f04d4caa84ed9afc1aed0020ef3ce986b7b2b0fd64a8a7f685549d3",
-    "STATIC_UI_PROFILES_SHA256": "a0bbf67952e90db8401660ef202d5fca52c0372c087db6cadaf3a9ad71bc931b",
+    "STATIC_UI_PROFILES_SHA256": "bc0c131020dee54e276bc5333914ccd26a700861eee8561e442894e4702bdc46",
     "STATIC_UI_RECEIPT_SHA256": "6333055219e4b3c6a8a561df18774b008ed5afe428dc1d7fcc15fcb705bb0987",
     "STATIC_UI_RECEIPT_TEST_SHA256": "9a92d7076a2b3026c5ad28361783a673b67006b651eb4312a8c9972bd1e91d9d",
-}
-
-# Two-phase rotation: this digest may describe the reviewed file in the current
-# tree, but no reusable workflow may consume it until a subsequent pin-only PR
-# names the already-merged commit that contains it. Only the profile artifact
-# has a candidate slot; executable policy and tests remain single-pin.
-INACTIVE_CANDIDATE_ORG_POLICY = {
-    "STATIC_UI_PROFILES_SHA256": "bc0c131020dee54e276bc5333914ccd26a700861eee8561e442894e4702bdc46",
 }
 
 POLICY_ARTIFACTS = {
@@ -86,11 +78,7 @@ def verify_local_policy_artifacts(security_directory: Path) -> None:
             continue
         artifact = security_directory / filename
         actual = hashlib.sha256(artifact.read_bytes()).hexdigest()
-        accepted = {
-            EXPECTED_ORG_POLICY[variable],
-            INACTIVE_CANDIDATE_ORG_POLICY.get(variable),
-        }
-        if actual not in accepted:
+        if actual != EXPECTED_ORG_POLICY[variable]:
             raise WorkflowPolicyError(
                 f"approved organization policy hash differs from {filename}"
             )
