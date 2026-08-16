@@ -54,6 +54,14 @@ EXPECTED_ORG_POLICY = {
     "STATIC_UI_RECEIPT_TEST_SHA256": "9a92d7076a2b3026c5ad28361783a673b67006b651eb4312a8c9972bd1e91d9d",
 }
 
+# Two-phase rotation: this digest may describe the reviewed file in the current
+# tree, but no reusable workflow may consume it until a subsequent pin-only PR
+# names the already-merged commit that contains it. Only the profile artifact
+# has a candidate slot; executable policy and tests remain single-pin.
+INACTIVE_CANDIDATE_ORG_POLICY = {
+    "STATIC_UI_PROFILES_SHA256": "bc0c131020dee54e276bc5333914ccd26a700861eee8561e442894e4702bdc46",
+}
+
 POLICY_ARTIFACTS = {
     "OSV_GATE_SHA256": "osv_gate.py",
     "OSV_GATE_TEST_SHA256": "test_osv_gate.py",
@@ -78,7 +86,11 @@ def verify_local_policy_artifacts(security_directory: Path) -> None:
             continue
         artifact = security_directory / filename
         actual = hashlib.sha256(artifact.read_bytes()).hexdigest()
-        if actual != EXPECTED_ORG_POLICY[variable]:
+        accepted = {
+            EXPECTED_ORG_POLICY[variable],
+            INACTIVE_CANDIDATE_ORG_POLICY.get(variable),
+        }
+        if actual not in accepted:
             raise WorkflowPolicyError(
                 f"approved organization policy hash differs from {filename}"
             )
