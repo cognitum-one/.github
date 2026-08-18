@@ -835,15 +835,20 @@ class StaticUiWorkflowPolicyTests(unittest.TestCase):
                 "            git -c credential.helper=store clone",
             ),
             (
+                # Indented one level deeper than the clone/fetch mutations above
+                # because the three network calls now live inside the bounded
+                # retry function added for cognitum-one/website#285. The
+                # property under test is unchanged: a lazy checkout must still
+                # authenticate through the ephemeral askpass helper.
                 "drop lazy checkout authentication",
                 (
-                    '          GIT_ASKPASS="$ASKPASS" GIT_TERMINAL_PROMPT=0 \\\n'
-                    '            git -C "$BEACON_ROOT" -c credential.helper= \\\n'
-                    '              checkout --detach "$BEACON_SHA"'
+                    '            GIT_ASKPASS="$ASKPASS" GIT_TERMINAL_PROMPT=0 \\\n'
+                    '              git -C "$BEACON_ROOT" -c credential.helper= \\\n'
+                    '                checkout --detach "$BEACON_SHA" || return 1'
                 ),
                 (
-                    '          git -C "$BEACON_ROOT" -c credential.helper= '
-                    'checkout --detach "$BEACON_SHA"'
+                    '            git -C "$BEACON_ROOT" -c credential.helper= '
+                    'checkout --detach "$BEACON_SHA" || return 1'
                 ),
             ),
             (

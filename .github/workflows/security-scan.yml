@@ -289,18 +289,57 @@ jobs:
             '  *) exit 1 ;;' \
             'esac' > "$ASKPASS"
           chmod 0700 "$ASKPASS"
-          GIT_ASKPASS="$ASKPASS" GIT_TERMINAL_PROMPT=0 \
-            git -c credential.helper= clone \
-              --filter=blob:none --no-checkout \
-              https://github.com/cognitum-one/beacon.git "$BEACON_ROOT"
-          GIT_ASKPASS="$ASKPASS" GIT_TERMINAL_PROMPT=0 \
-            git -C "$BEACON_ROOT" -c credential.helper= \
-              fetch --depth=1 origin "$BEACON_SHA"
-          # A partial clone can lazily fetch commit payloads during checkout, so
-          # checkout must use the same ephemeral helper as clone and fetch.
-          GIT_ASKPASS="$ASKPASS" GIT_TERMINAL_PROMPT=0 \
-            git -C "$BEACON_ROOT" -c credential.helper= \
-              checkout --detach "$BEACON_SHA"
+          # Bounded retry (cognitum-one/website#285). This fetch intermittently
+          # fails with `remote: Repository not found` and then succeeds on a
+          # re-run with NO change to the token, the App, or the installation —
+          # measured again on 2026-08-18, where a re-run of the identical job
+          # passed. Every beacon-affecting release paid for that with a manual
+          # re-dispatch, and the error reads like a broken installation.
+          #
+          # #285 attributes it to an EMPTY minted token. That is not what
+          # happens here: `test -n "$GH_TOKEN"` above already passed, so the
+          # token was present and the 404 came back for a non-empty credential.
+          # The remaining explanation is eventual consistency in the scoping of
+          # a freshly minted installation token, which a short backoff clears
+          # and a re-mint would not.
+          #
+          # So the retry is the mitigation, and the probe below is the
+          # experiment: on a genuine exhaustion it reports whether the token can
+          # see the repository at all, which separates "transient propagation"
+          # from "the installation really lost beacon" without another guess.
+          fetch_beacon_source() {
+            GIT_ASKPASS="$ASKPASS" GIT_TERMINAL_PROMPT=0 \
+              git -c credential.helper= clone \
+                --filter=blob:none --no-checkout \
+                https://github.com/cognitum-one/beacon.git "$BEACON_ROOT" || return 1
+            GIT_ASKPASS="$ASKPASS" GIT_TERMINAL_PROMPT=0 \
+              git -C "$BEACON_ROOT" -c credential.helper= \
+                fetch --depth=1 origin "$BEACON_SHA" || return 1
+            # A partial clone can lazily fetch commit payloads during checkout, so
+            # checkout must use the same ephemeral helper as clone and fetch.
+            GIT_ASKPASS="$ASKPASS" GIT_TERMINAL_PROMPT=0 \
+              git -C "$BEACON_ROOT" -c credential.helper= \
+                checkout --detach "$BEACON_SHA" || return 1
+          }
+          beacon_attempt=1
+          beacon_max=3
+          until fetch_beacon_source; do
+            if [ "$beacon_attempt" -ge "$beacon_max" ]; then
+              echo "::error::Beacon source fetch failed after $beacon_max attempts."
+              probe="$(curl -sS -o /dev/null -w '%{http_code}' \
+                -H "Authorization: Bearer $GH_TOKEN" \
+                -H "Accept: application/vnd.github+json" \
+                https://api.github.com/repos/cognitum-one/beacon || echo 000)"
+              echo "::error::Token visibility probe for cognitum-one/beacon: HTTP $probe. 200 means the minted token CAN see the repository, so the failure was transient and the retry budget was too small; 404 means this token is genuinely not scoped to beacon and the App installation needs fixing."
+              exit 1
+            fi
+            # A failed clone can leave a partial directory, which makes the next
+            # attempt fail for a different reason than the one being retried.
+            rm -rf "$BEACON_ROOT"
+            echo "Beacon source fetch attempt $beacon_attempt failed; retrying in $((beacon_attempt * 5))s"
+            sleep "$((beacon_attempt * 5))"
+            beacon_attempt=$((beacon_attempt + 1))
+          done
           test "$(git -C "$BEACON_ROOT" rev-parse HEAD)" = "$BEACON_SHA"
           echo "root=$BEACON_ROOT" >> "$GITHUB_OUTPUT"
 
