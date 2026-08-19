@@ -263,7 +263,7 @@ class ProfileAndContextTest(unittest.TestCase):
             loaded["profiles"]["cognitum-one/website"]["packagingFiles"][
                 ".dockerignore"
             ],
-            "7439be2d499aabfa11782c2ceb24b159b188e13f9ffced8b14a42e4feea4e29b",
+            "de1e9abb8aa73e72d56fc98f804b1a96b4f26cf75c2a0100519e1046fbaefd26",
         )
 
     def test_approved_profile_cannot_have_missing_digest(self) -> None:
