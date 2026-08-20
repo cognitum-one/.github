@@ -62,7 +62,7 @@ env:
 jobs:
   secrets:
     name: secret scan (current files)
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, gcp-bypass]
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
@@ -96,7 +96,7 @@ jobs:
     name: secret scan (full history audit)
     # Findings are informational; scanner integrity/execution failures block.
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, gcp-bypass]
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
@@ -139,7 +139,7 @@ jobs:
 
   deps:
     name: dependency scan (OSV, fail on High+ fixable)
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, gcp-bypass]
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
@@ -164,6 +164,9 @@ jobs:
             "https://raw.githubusercontent.com/cognitum-one/.github/${OSV_POLICY_COMMIT}/security/run_osv_scan.py"
           curl --proto '=https' --tlsv1.2 -fsSLo "$POLICY_DIR/test_run_osv_scan.py" \
             "https://raw.githubusercontent.com/cognitum-one/.github/${OSV_POLICY_COMMIT}/security/test_run_osv_scan.py"
+          # Fixture for the organization self-test below ONLY. Enforcement reads
+          # the candidate repository's own .github/static-ui-profile.json, so a
+          # Dockerfile or lockfile change no longer needs a PR to this repo.
           curl --proto '=https' --tlsv1.2 -fsSLo "$POLICY_DIR/static-ui-runtime-profiles.json" \
             "https://raw.githubusercontent.com/cognitum-one/.github/${OSV_POLICY_COMMIT}/security/static-ui-runtime-profiles.json"
           curl --proto '=https' --tlsv1.2 -fsSLo "$POLICY_DIR/static_ui_runtime_receipt.py" \
@@ -262,15 +265,20 @@ jobs:
             fi
           }
           trap cleanup_beacon_credentials EXIT
-          BEACON_SHA="$(POLICY_DIR="$POLICY_DIR" python3 <<'PY'
+          # The candidate repository owns this file. The enforcement SCRIPT above
+          # stays organization-owned and hash-verified, so a repository can change
+          # WHAT it declares but never HOW the declaration is enforced.
+          STATIC_UI_PROFILE="$GITHUB_WORKSPACE/.github/static-ui-profile.json"
+          test -f "$STATIC_UI_PROFILE"
+          test ! -L "$STATIC_UI_PROFILE"
+          BEACON_SHA="$(STATIC_UI_PROFILE="$STATIC_UI_PROFILE" python3 <<'PY'
           import json
           import os
           import re
           from pathlib import Path
 
           policy = json.loads(
-              (Path(os.environ["POLICY_DIR"]) / "static-ui-runtime-profiles.json")
-              .read_text(encoding="utf-8")
+              Path(os.environ["STATIC_UI_PROFILE"]).read_text(encoding="utf-8")
           )
           sha = policy["profiles"]["cognitum-one/website"]["submodules"]["beacon"]["commitSha"]
           if not isinstance(sha, str) or not re.fullmatch(r"[0-9a-f]{40}", sha):
@@ -379,9 +387,15 @@ jobs:
           umask 077
           openssl rand -hex 32 > "$NONCE_DIR/nonce"
           chmod 0600 "$NONCE_DIR/nonce"
+          # The candidate repository owns this file. The enforcement SCRIPT above
+          # stays organization-owned and hash-verified, so a repository can change
+          # WHAT it declares but never HOW the declaration is enforced.
+          STATIC_UI_PROFILE="$GITHUB_WORKSPACE/.github/static-ui-profile.json"
+          test -f "$STATIC_UI_PROFILE"
+          test ! -L "$STATIC_UI_PROFILE"
           IMAGE_TAG="cognitum-static-ui/${GITHUB_REPOSITORY#*/}:${GITHUB_SHA}"
           arguments=(
-            --policy "$POLICY_DIR/static-ui-runtime-profiles.json"
+            --policy "$STATIC_UI_PROFILE"
             build
             --repository "$GITHUB_REPOSITORY"
             --repository-root "$GITHUB_WORKSPACE"
