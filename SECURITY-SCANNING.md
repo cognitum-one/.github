@@ -3,6 +3,54 @@
 Self-hosted secret + dependency scanning for all `cognitum-one` repos. Runs on
 our own CI — **no GitHub paid Advanced Security / auto-protection required.**
 
+## Where it runs, and why that changed (2026-08-20)
+
+All three jobs are `runs-on: [self-hosted, gcp-bypass]`. They were
+`ubuntu-latest` / `ubuntu-24.04` until the org-wide Actions billing stop, under
+which **no hosted job can start at all** — every `security` run in the
+organization failed in about four seconds without scanning anything. That is
+worth stating precisely because it does not look like an outage: the check goes
+red instantly and reads like a finding, and a repository whose scan never ran is
+indistinguishable from one that passed unless you look at the annotation.
+
+Two consequences that are easy to get wrong:
+
+- **Consumers pin this workflow by full commit sha**, so a repository stays on
+  whatever version it pinned. Moving the jobs here does not move them for a
+  caller until that caller re-pins. A green-looking repo may simply never have
+  run.
+- **`concurrency` is not optional for this workflow.** Each run builds a
+  container image for the static-UI receipt, so without a group four merges
+  inside two minutes produce four simultaneous docker builds. Measured on
+  website: 13 of 13 runners busy and production publishes queued behind them for
+  about an hour. Callers should set
+
+  ```yaml
+  concurrency:
+    group: security-${{ github.ref }}
+    cancel-in-progress: false
+  ```
+
+  `cancel-in-progress: false` is load-bearing. These scans are **required status
+  checks**, and required checks bind per-commit: cancelling a superseded run
+  leaves that commit permanently without a passing scan, which is exactly the
+  state that blocks a back-merge to `rc`.
+
+## `security/static-ui-runtime-profiles.json` is a FIXTURE, not the policy
+
+It is still here and still hash-pinned, but since 2026-08-20 **its digests gate
+nothing.** Enforcement reads `.github/static-ui-profile.json` from the candidate
+repository. This copy exists only because the organization self-test suite loads
+it by default — 2 of its 39 tests fail without it.
+
+Do not advance a digest here expecting it to affect a scan, and do not read it
+to learn what a repository currently pins; read that repository's own file. The
+name is misleading and should be changed to say `-fixture`. That rename is not
+free — it touches `DEFAULT_POLICY`, `osv_gate.py`, three test files, the
+`POLICY_ARTIFACTS` and `EXPECTED_ORG_POLICY` tables, and the `curl` plus sha
+pins in three workflows, and every consumer must then re-pin — so it is
+deliberately left as a named follow-up rather than done quietly.
+
 ## Layers
 
 1. **Pre-commit** (`templates/.pre-commit-config.yaml`) — gitleaks + private-key
@@ -75,9 +123,12 @@ It in turn:
 - keeps scanner binaries, policies, and machine reports outside the untrusted
   checkout and rejects symlinks, unexpected process statuses, empty or
   malformed reports, and command-grammar drift;
-- downloads the organization-owned static-UI profile, trusted builder, and
-  their adversarial tests from the same immutable policy commit, verifies every
-  digest, and runs each test file directly;
+- downloads the static-UI receipt script, trusted builder, and their
+  adversarial tests from the same immutable policy commit, verifies every
+  digest, and runs each test file directly. The SCRIPT is organization-owned;
+  the PROFILE is not — since 2026-08-20 each candidate owns
+  `.github/static-ui-profile.json` in its own repository, so a repository
+  chooses *what* it declares but never *how* the declaration is enforced;
 - for the exact `cognitum-one/website` and `cognitum-one/management` profiles,
   exports a committed-only context, performs a no-cache `linux/amd64` build,
   inventories the resulting root filesystem, and supplies the receipt,

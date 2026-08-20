@@ -14,12 +14,38 @@ on:
 permissions:
   contents: read
 
+# NOT optional. Each run of the shared workflow builds a container image for the
+# static-UI receipt, so without a group four merges inside two minutes produce
+# four simultaneous docker builds. Measured on cognitum-one/website 2026-08-20:
+# 13 of 13 self-hosted runners busy and production publishes queued behind them
+# for about an hour.
+#
+# cancel-in-progress is FALSE deliberately. These scans are used as REQUIRED
+# status checks, and required checks bind per-commit: cancelling a superseded
+# run leaves that commit permanently without a passing scan, which blocks a
+# back-merge to `rc` in a way that is genuinely hard to diagnose.
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   scan:
     permissions:
       contents: read
-    # PR2 bootstrap: replace this fail-closed zero ref with the reviewed PR2
-    # content commit before merging the final pin-only commit.
+    # DO NOT edit this sha by hand. verify_static_ui_workflows.py requires it to
+    # equal STATIC_UI_WORKFLOW_COMMIT in static-ui-release.yml and
+    # static-ui-revision.yml, so the template, the release gate and the revision
+    # gate all name one approved workflow commit. Advancing it is a deliberate
+    # act on all three together, not a template edit.
+    #
+    # Consequence worth knowing when you adopt this: this pin currently predates
+    # the 2026-08-20 changes, so a repository copying the template verbatim gets
+    # a scan whose jobs are still `runs-on: ubuntu-*` and therefore cannot start
+    # at all while the Actions billing stop lasts, and which verifies the receipt
+    # against the organization profile copy rather than the repository's own
+    # .github/static-ui-profile.json. Re-pin to the current approved commit after
+    # adopting; cognitum-one/website and cognitum-one/management are on
+    # 55c796af88bcfa1a7cc51d7983fd7e5d4b261b20.
     uses: cognitum-one/.github/.github/workflows/security-scan.yml@e0a423bede1c7855e62b27832ec5cc0167c13d03
     # Required only for cognitum-one/website. Other repositories may omit the
     # mapping; the shared workflow never receives unrelated repository secrets.
