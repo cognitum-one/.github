@@ -197,7 +197,21 @@ def _verified_runtime_receipt_from_environment(
     if not re.fullmatch(r"[0-9a-f]{64}\n", nonce_source):
         raise ValueError("runtime receipt nonce file is malformed")
 
-    policy_path = Path(__file__).with_name("static-ui-runtime-profiles.json")
+    # The candidate repository owns its static UI profile, so the receipt is
+    # BUILT from that file and must be RE-VERIFIED against the same one. This
+    # path defaulted to the copy sitting beside this script, which meant the
+    # receipt was built from one profile and checked against another: the gate
+    # failed with "premerge fixture evidence differs from the profile" for a
+    # repository whose profile was entirely self-consistent.
+    #
+    # The variable is set by the organization-owned workflow, never by the
+    # candidate, and the file is still required to be a real regular file.
+    policy_override = os.environ.get("STATIC_UI_POLICY_PATH")
+    policy_path = (
+        Path(policy_override)
+        if policy_override
+        else Path(__file__).with_name("static-ui-runtime-profiles.json")
+    )
     if policy_path.is_symlink() or not policy_path.is_file():
         raise ValueError("immutable runtime profile policy is unavailable")
     try:

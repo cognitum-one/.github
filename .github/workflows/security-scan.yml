@@ -50,7 +50,7 @@ env:
   OSV_VERSION: "2.2.4"
   OSV_LINUX_AMD64_SHA256: "7702cd1e5d9f5059dd9570f4ad967f27d3c5f5391b371ec937b384c238177f55"
   OSV_POLICY_COMMIT: "764d79403736fc2794f069854e17cf41591806d2"
-  OSV_GATE_SHA256: "78f72dd03b2513829c13c2a338e4dca44f39e5fabdaacee4e94dc5258199d2fa"
+  OSV_GATE_SHA256: "5e998e705b1b4dc22d6f0c0704de64d50124c0783dbc745c3ce2d919fbe9ab2f"
   OSV_GATE_TEST_SHA256: "801d2ef72cc1905a34edbf54393a44e2deb88b492374fc35f6ba6d14cb58139c"
   OSV_CONFIG_SHA256: "5bd10fc47448111e6d8bed4682b9b80e4c420ca6cb0808a252b8c6d8cd920c34"
   OSV_RUNNER_SHA256: "f5d4c3e85e673d031bee763d7d516de07af420b727f8cdb9555748de9867e1a3"
@@ -443,6 +443,15 @@ jobs:
         run: |
           set -euo pipefail
           POLICY_DIR="$RUNNER_TEMP/osv-policy"
+          # Re-verify the receipt against the SAME profile it was built from --
+          # the candidate's own. Without this the gate loads the copy beside the
+          # script and rejects a self-consistent repository with "premerge
+          # fixture evidence differs from the profile". Repositories with no
+          # profile leave this unset and the gate keeps its previous default.
+          if [ -f "$GITHUB_WORKSPACE/.github/static-ui-profile.json" ] \
+            && [ ! -L "$GITHUB_WORKSPACE/.github/static-ui-profile.json" ]; then
+            export STATIC_UI_POLICY_PATH="$GITHUB_WORKSPACE/.github/static-ui-profile.json"
+          fi
           OSV_BIN="$POLICY_DIR/osv-scanner"
           OSV_REPORT="$RUNNER_TEMP/osv-report.json"
           curl --proto '=https' --tlsv1.2 -fsSLo "$OSV_BIN" \
