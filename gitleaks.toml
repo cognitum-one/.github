@@ -22,6 +22,14 @@ paths = [
   # office: TEST_PRIVATE_PEM — clearly labelled test-only RSA key
   '''crates/api/src/test_support\.rs''',
 
+  # Repository-owned static UI profile: a map of file paths to sha256 digests of
+  # files ALREADY IN THE REPOSITORY, plus pinned image digests and commit shas.
+  # Every value is a hash of public content, so there is nothing here to leak.
+  # generic-api-key fires on the long-path-key + 64-hex-value shape; it matched
+  # management's sixteen entries and not website's ten, which is a good reminder
+  # that the rule is a heuristic on shape rather than a judgement about secrecy.
+  '''(^|.*/)\.github/static-ui-profile\.json$''',
+
   # Committed PUBLIC keys / certificates — public by definition, not secrets.
   '''.*\.pub$''',
   '''.*(ca|cert|certificate|release-signing)[a-z0-9._-]*\.pem$''',
