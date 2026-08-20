@@ -67,6 +67,37 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           persist-credentials: false
+      # The bypass fleet is PERSISTENT runners -- four per VM, reusing
+      # _work/<repo>/<repo> between jobs. `actions/checkout` runs
+      # `git clean -ffdx`, which does NOT remove submodule working trees:
+      # submodules are TRACKED gitlinks, not untracked files. So a sibling job
+      # that ran `git submodule update` leaves its content in the very tree
+      # this job is about to scan.
+      #
+      # Measured on cognitum-one/console, 2026-08-20: a clean checkout is
+      # 5.62 MB and scans clean; the reused workspace was 221.75 MB and
+      # produced 29 findings, every one inside vendor/ruvector and none in
+      # console. Throughout, `git status --porcelain` reported ZERO untracked
+      # files -- which is why this needs a step rather than a comment. On
+      # hosted runners it could not happen; every job got a fresh VM. That
+      # assumption left with the hosted runners.
+      - name: Purge anything a sibling job left in this workspace
+        run: |
+          set -euo pipefail
+          if [ -f .gitmodules ]; then
+            git submodule deinit --all --force
+          fi
+          git clean -ffdx
+          # Falsifiable, unlike `git status --porcelain` -- which passed while
+          # 377 MB of third-party code sat in the tree. `git submodule status`
+          # prefixes an emptied submodule with '-'; anything else means content
+          # survived and the scan target is not this repository.
+          if [ -f .gitmodules ] && git submodule status --recursive 2>/dev/null | grep -qv '^-'; then
+            echo "::error::a submodule working tree survived the purge; refusing to scan a workspace that is not the repository"
+            git submodule status --recursive
+            exit 1
+          fi
+          echo "scan target: $(du -sh . | cut -f1) across $(git ls-files | wc -l) tracked files"
       - name: Run gitleaks (current files, blocking)
         run: |
           set -euo pipefail
@@ -102,6 +133,37 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      # The bypass fleet is PERSISTENT runners -- four per VM, reusing
+      # _work/<repo>/<repo> between jobs. `actions/checkout` runs
+      # `git clean -ffdx`, which does NOT remove submodule working trees:
+      # submodules are TRACKED gitlinks, not untracked files. So a sibling job
+      # that ran `git submodule update` leaves its content in the very tree
+      # this job is about to scan.
+      #
+      # Measured on cognitum-one/console, 2026-08-20: a clean checkout is
+      # 5.62 MB and scans clean; the reused workspace was 221.75 MB and
+      # produced 29 findings, every one inside vendor/ruvector and none in
+      # console. Throughout, `git status --porcelain` reported ZERO untracked
+      # files -- which is why this needs a step rather than a comment. On
+      # hosted runners it could not happen; every job got a fresh VM. That
+      # assumption left with the hosted runners.
+      - name: Purge anything a sibling job left in this workspace
+        run: |
+          set -euo pipefail
+          if [ -f .gitmodules ]; then
+            git submodule deinit --all --force
+          fi
+          git clean -ffdx
+          # Falsifiable, unlike `git status --porcelain` -- which passed while
+          # 377 MB of third-party code sat in the tree. `git submodule status`
+          # prefixes an emptied submodule with '-'; anything else means content
+          # survived and the scan target is not this repository.
+          if [ -f .gitmodules ] && git submodule status --recursive 2>/dev/null | grep -qv '^-'; then
+            echo "::error::a submodule working tree survived the purge; refusing to scan a workspace that is not the repository"
+            git submodule status --recursive
+            exit 1
+          fi
+          echo "scan target: $(du -sh . | cut -f1) across $(git ls-files | wc -l) tracked files"
       - name: Run gitleaks (full history, informational)
         run: |
           set -euo pipefail
@@ -146,6 +208,37 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      # The bypass fleet is PERSISTENT runners -- four per VM, reusing
+      # _work/<repo>/<repo> between jobs. `actions/checkout` runs
+      # `git clean -ffdx`, which does NOT remove submodule working trees:
+      # submodules are TRACKED gitlinks, not untracked files. So a sibling job
+      # that ran `git submodule update` leaves its content in the very tree
+      # this job is about to scan.
+      #
+      # Measured on cognitum-one/console, 2026-08-20: a clean checkout is
+      # 5.62 MB and scans clean; the reused workspace was 221.75 MB and
+      # produced 29 findings, every one inside vendor/ruvector and none in
+      # console. Throughout, `git status --porcelain` reported ZERO untracked
+      # files -- which is why this needs a step rather than a comment. On
+      # hosted runners it could not happen; every job got a fresh VM. That
+      # assumption left with the hosted runners.
+      - name: Purge anything a sibling job left in this workspace
+        run: |
+          set -euo pipefail
+          if [ -f .gitmodules ]; then
+            git submodule deinit --all --force
+          fi
+          git clean -ffdx
+          # Falsifiable, unlike `git status --porcelain` -- which passed while
+          # 377 MB of third-party code sat in the tree. `git submodule status`
+          # prefixes an emptied submodule with '-'; anything else means content
+          # survived and the scan target is not this repository.
+          if [ -f .gitmodules ] && git submodule status --recursive 2>/dev/null | grep -qv '^-'; then
+            echo "::error::a submodule working tree survived the purge; refusing to scan a workspace that is not the repository"
+            git submodule status --recursive
+            exit 1
+          fi
+          echo "scan target: $(du -sh . | cut -f1) across $(git ls-files | wc -l) tracked files"
       - name: Fetch and self-test the immutable organization OSV gate
         run: |
           set -euo pipefail
