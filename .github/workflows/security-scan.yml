@@ -314,7 +314,7 @@ jobs:
             github.repository == 'cognitum-one/website' ||
             github.repository == 'cognitum-one/management'
           }}
-        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
         with:
           driver: docker-container
           driver-opts: |
@@ -325,7 +325,7 @@ jobs:
       - name: Mint the exact website and Beacon read token
         id: static-ui-bridge-token
         if: ${{ github.repository == 'cognitum-one/website' }}
-        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
         with:
           app-id: ${{ secrets.static_ui_bridge_app_id }}
           private-key: ${{ secrets.static_ui_bridge_app_private_key }}
