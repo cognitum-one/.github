@@ -161,9 +161,9 @@ missing or invalid. A non-empty malformed severity remains a malformed report
 even when the advisory has no fix.
 
 The SHA-pinned `docker/setup-buildx-action` commit
-`8d2750c68a42422c14e847fe6c8ac0403b4cbd6f` is deliberately given no
+`37fe631027851001ddb9b187196cc803df7f5f0e` is deliberately given no
 `version` or `cache-binary` input. Its packaged
-`@docker/actions-toolkit` 0.63.0 resolves release information from
+`@docker/actions-toolkit` 0.95.0 resolves release information from
 `buildx-releases.json` on the toolkit's mutable `main` branch and downloads
 GitHub release assets without checking a release checksum. A
 `version: v0.33.0` input would therefore execute downloaded bytes before this
