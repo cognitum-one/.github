@@ -773,7 +773,7 @@ class StaticUiWorkflowPolicyTests(unittest.TestCase):
                 "float token action",
                 (
                     "actions/create-github-app-token@"
-                    "d72941d797fd3113feb6b93fd0dec494b13a2547"
+                    "bcd2ba49218906704ab6c1aa796996da409d3eb1"
                 ),
                 "actions/create-github-app-token@main",
             ),

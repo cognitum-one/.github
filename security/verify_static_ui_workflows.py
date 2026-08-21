@@ -35,9 +35,9 @@ EXPECTED_BUILDX_URL = (
 EXPECTED_ACTIONS = {
     "actions/attest": "f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6",
     "actions/checkout": "fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09",
-    "actions/create-github-app-token": "d72941d797fd3113feb6b93fd0dec494b13a2547",
+    "actions/create-github-app-token": "bcd2ba49218906704ab6c1aa796996da409d3eb1",
     "actions/upload-artifact": "043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
-    "docker/setup-buildx-action": "8d2750c68a42422c14e847fe6c8ac0403b4cbd6f",
+    "docker/setup-buildx-action": "37fe631027851001ddb9b187196cc803df7f5f0e",
     "google-github-actions/auth": "7c6bc770dae815cd3e89ee6cdf493a5fab2cc093",
     "google-github-actions/setup-gcloud": "aa5489c8933f4cc7a4f7d45035b3b1440c9c10db",
 }
@@ -399,7 +399,7 @@ def _verify_security_app_bridge(source: str) -> None:
         "if: ${{ github.repository == 'cognitum-one/website' }}",
         (
             "uses: actions/create-github-app-token@"
-            "d72941d797fd3113feb6b93fd0dec494b13a2547"
+            "bcd2ba49218906704ab6c1aa796996da409d3eb1"
         ),
         "app-id: ${{ secrets.static_ui_bridge_app_id }}",
         "private-key: ${{ secrets.static_ui_bridge_app_private_key }}",
