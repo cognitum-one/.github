@@ -346,7 +346,6 @@ jobs:
             echo "::error::The website runtime proof requires its scoped GitHub App bridge token."
             exit 1
           }
-          POLICY_DIR="$RUNNER_TEMP/osv-policy"
           BEACON_ROOT="$RUNNER_TEMP/static-ui-beacon"
           ASKPASS="$RUNNER_TEMP/static-ui-beacon-askpass.sh"
           test ! -e "$BEACON_ROOT"
