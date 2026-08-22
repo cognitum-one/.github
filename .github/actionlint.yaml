@@ -1,5 +1,10 @@
 self-hosted-runner:
   labels:
+    # The org's self-hosted pools. Declared here so actionlint validates
+    # runs-on instead of flagging every one as an unknown label -- a warning
+    # everybody learns to ignore is worse than no warning.
     - gcp-bypass
+    - gcp-identity-deploy
+    - management-attestation
 
 config-variables: null
