@@ -569,7 +569,9 @@ def _verify_security(source: str) -> None:
         "static_ui_bridge_app_private_key:",
         "fetch-depth: 0",
         "persist-credentials: false",
-        "deps:\n    name: dependency scan (OSV, fail on High+ fixable)\n    runs-on: [self-hosted, gcp-bypass]",
+        "deps:\n    name: dependency scan (OSV, fail on High+ fixable)\n"
+        "    runs-on: ${{ github.event.repository.visibility == 'public' "
+        "&& 'ubuntu-latest' || fromJSON('[\"self-hosted\",\"gcp-bypass\"]') }}",
         "static-ui-runtime-profiles.json",
         "static_ui_runtime_receipt.py",
         "test_static_ui_runtime_receipt.py",
