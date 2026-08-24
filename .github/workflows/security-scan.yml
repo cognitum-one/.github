@@ -60,9 +60,18 @@ env:
   STATIC_UI_RECEIPT_TEST_SHA256: "9a92d7076a2b3026c5ad28361783a673b67006b651eb4312a8c9972bd1e91d9d"
 
 jobs:
+  # runs-on below: the gcp-bypass fleet exists to keep PRIVATE repos scanning
+  # after the Actions billing stop (public repos were never metered, so they
+  # never needed it). Every runner group in the org has
+  # allows_public_repositories=false by design (cognitum-one/.github#83) --
+  # routing a public caller (cogs, sdks) at the fleet is not a config knob,
+  # it is a job GitHub refuses to schedule, and it fails silently: no runner
+  # ever claims it, so the job sits queued until GitHub times it out cold,
+  # with no error pointing at the cause. Public callers get GitHub-hosted
+  # instead; private callers keep the fleet.
   secrets:
     name: secret scan (current files)
-    runs-on: [self-hosted, gcp-bypass]
+    runs-on: ${{ github.event.repository.visibility == 'public' && 'ubuntu-latest' || fromJSON('["self-hosted","gcp-bypass"]') }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
@@ -127,7 +136,7 @@ jobs:
     name: secret scan (full history audit)
     # Findings are informational; scanner integrity/execution failures block.
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-    runs-on: [self-hosted, gcp-bypass]
+    runs-on: ${{ github.event.repository.visibility == 'public' && 'ubuntu-latest' || fromJSON('["self-hosted","gcp-bypass"]') }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
@@ -201,7 +210,7 @@ jobs:
 
   deps:
     name: dependency scan (OSV, fail on High+ fixable)
-    runs-on: [self-hosted, gcp-bypass]
+    runs-on: ${{ github.event.repository.visibility == 'public' && 'ubuntu-latest' || fromJSON('["self-hosted","gcp-bypass"]') }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
