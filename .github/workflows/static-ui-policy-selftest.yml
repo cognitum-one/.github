@@ -59,6 +59,9 @@ jobs:
           python3 security/test_static_ui_release_gate.py
           python3 security/test_verify_static_ui_workflows.py
           python3 security/verify_static_ui_workflows.py
+          python3 security/test_enforcement_gate.py
+          node --test security/test_verify_workflow_pins.mjs
+          node security/verify_workflow_pins.mjs .
           python3 -m json.tool workflow-templates/security.properties.json >/dev/null
 
       - name: Run hash-verified actionlint and ShellCheck
