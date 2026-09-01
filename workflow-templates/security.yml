@@ -29,7 +29,8 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  scan:
+  security:
+    name: security
     permissions:
       contents: read
     # DO NOT edit this sha by hand. verify_static_ui_workflows.py requires it to

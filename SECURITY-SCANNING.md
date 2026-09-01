@@ -5,7 +5,9 @@ our own CI — **no GitHub paid Advanced Security / auto-protection required.**
 
 ## Where it runs, and why that changed (2026-08-20)
 
-All three jobs are `runs-on: [self-hosted, gcp-bypass]`. They were
+Private-repository jobs use `[self-hosted, gcp-bypass]`; public callers use
+GitHub-hosted runners because the private runner group rejects public
+repositories. The private jobs used
 `ubuntu-latest` / `ubuntu-24.04` until the org-wide Actions billing stop, under
 which **no hosted job can start at all** — every `security` run in the
 organization failed in about four seconds without scanning anything. That is
@@ -57,10 +59,66 @@ deliberately left as a named follow-up rather than done quietly.
    detection before a commit is created. Cheapest place to stop a leak.
 2. **CI** (`.github/workflows/security-scan.yml`) — reusable workflow:
    blocking gitleaks over current files, blocking OSV policy over every
-   discovered lockfile, plus an informational full-history secret audit on
-   scheduled/manual runs.
+   discovered lockfile, blocking workflow supply-chain policy, plus an
+   informational full-history secret audit on scheduled/manual runs. The
+   fail-closed fan-in is the stable `security / enforcement` context when the
+   caller job is named `security`.
 3. **Org sweep** — the weekly `schedule:` trigger gives every repo a recurring
    drift check; results feed the weekly QE report.
+
+## Required contexts and bypass boundary
+
+For an ordinary deployable repository, the target-branch ruleset should require:
+
+- `security / enforcement` from a caller job named `security`;
+- the repository's existing aggregate CI context;
+- one code-owner approval when a change touches workflows, security or
+  dependency policy, CODEOWNERS, or deployment files; and
+- two approvals where the repository already has that stronger requirement.
+
+The organization policy permits an administrator merge bypass. The accurate
+claim is therefore **enforced for ordinary merges, admin-bypassable**, not
+unconditionally merge-enforced. A bypass must carry an issue or incident
+reference, reason, audit-log receipt, and a follow-up run of the gate. Do not
+weaken a repository such as `due-diligence-harness` when its existing protection
+also applies to administrators or otherwise exceeds this baseline.
+
+Repository rulesets cannot make a bypassed red merge safe to deploy. Every
+deployment workflow must independently rerun the immutable security workflow on
+the exact candidate SHA and make the deploy job declare both aggregate CI and
+security as dependencies (for example, `needs: [ci, security]`). The deploy job
+must consume that same SHA and remain skipped when either dependency is red.
+Routine deploy authority belongs only to CI deployment service accounts; human
+break-glass access remains separately approved and audited.
+
+Ruleset changes, cloud IAM changes, and deployment mutations are rollout
+operations, not effects of this repository change. Capture the ruleset ID,
+required contexts, bypass actors, clean and controlled-failure runs, merge-block
+evidence, and exact-SHA deployment-skip evidence before calling a repository
+enforced.
+
+## Controlled-failure harness
+
+The policy commit contains local negative tests that exercise the aggregate and
+workflow-pin controls without creating an artifact, revision, or data mutation:
+
+```bash
+python3 security/test_enforcement_gate.py
+node --test security/test_verify_workflow_pins.mjs
+node security/verify_workflow_pins.mjs .
+```
+
+The repository test mutates a temporary caller from a full action SHA to
+`actions/checkout@v4` and requires rejection. The aggregate tests require a
+failed, cancelled, or missing current-tree secret, dependency, or workflow-pin
+result to fail closed. On scheduled/manual audit runs, history scanner
+integrity must pass; only the findings themselves remain informational.
+
+Pilot evidence still requires a short-lived unmerged PR in the target
+repository with a harmless known-fixable vulnerable fixture. Retain the failing
+run, ordinary merge-block result, and exact-SHA deploy-skip result, then close
+the PR without merging. No production artifact or data mutation is authorized
+by that test.
 
 ## Rollout (per repo)
 

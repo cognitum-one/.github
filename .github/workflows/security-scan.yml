@@ -10,6 +10,12 @@ name: security-scan
 #   secrets-history-audit — FULL history FINDINGS are informational, on the
 #                           weekly schedule (and manual dispatch) only.
 #                           Integrity, execution, and parse failures still block.
+# Workflow supply-chain policy is blocking on every run: all external Actions
+# and reusable workflows require full commit SHAs, container Actions require an
+# image digest, checkout credentials must not persist without a bounded reviewed
+# push exception, and registry-executed packages must use exact versions.
+# The final job is deliberately named `enforcement`. With the caller job named
+# `security`, GitHub exposes the stable `security / enforcement` context.
 # OSV policy: every High/Critical vulnerability with a fix blocks. Candidate
 #   lockfile `dev` flags are not trusted to downgrade findings. A repository with
 #   no dependency manifests at all PASSES: osv-scanner exits 128 with "No package
@@ -58,6 +64,11 @@ env:
   STATIC_UI_PROFILES_SHA256: "c1c40fd71dc7943d4ef698aa63d03902c0efe554e8d3566cb628ae6c0913a4da"
   STATIC_UI_RECEIPT_SHA256: "6333055219e4b3c6a8a561df18774b008ed5afe428dc1d7fcc15fcb705bb0987"
   STATIC_UI_RECEIPT_TEST_SHA256: "9a92d7076a2b3026c5ad28361783a673b67006b651eb4312a8c9972bd1e91d9d"
+  ENFORCEMENT_POLICY_COMMIT: "2850d99624ccdbf35fcbf647f7a6837c2f17c1d3"
+  WORKFLOW_PIN_POLICY_SHA256: "1e8d353ea7dd74435b95d2bfce8dc4d97588ae0c7c35fe66b04d160d8483200c"
+  WORKFLOW_PIN_POLICY_TEST_SHA256: "b150e09b26661567b76a40287587935adc1e21e929d0dab6a3d1a01cf4892e37"
+  ENFORCEMENT_GATE_SHA256: "09f8ef9671bd420cca2d6a09ca4d0cb642f1920dc46ab237e738480c047cffac"
+  ENFORCEMENT_GATE_TEST_SHA256: "d9b3a0dc351c58f22c567a6b8042997f1242ad8c9c6d9af739afaf3e832b6ab1"
 
 jobs:
   # runs-on below: the gcp-bypass fleet exists to keep PRIVATE repos scanning
@@ -207,6 +218,28 @@ jobs:
           else
             echo "Full-history audit: clean."
           fi
+
+  workflow-pins:
+    name: workflow supply-chain policy
+    runs-on: ${{ github.event.repository.visibility == 'public' && 'ubuntu-latest' || fromJSON('["self-hosted","gcp-bypass"]') }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+
+      - name: Fetch and self-test the immutable workflow pin policy
+        run: |
+          set -euo pipefail
+          POLICY_DIR="$RUNNER_TEMP/workflow-pin-policy"
+          install -d -m 0700 "$POLICY_DIR"
+          curl --proto '=https' --tlsv1.2 -fsSLo "$POLICY_DIR/verify_workflow_pins.mjs" \
+            "https://raw.githubusercontent.com/cognitum-one/.github/${ENFORCEMENT_POLICY_COMMIT}/security/verify_workflow_pins.mjs"
+          curl --proto '=https' --tlsv1.2 -fsSLo "$POLICY_DIR/test_verify_workflow_pins.mjs" \
+            "https://raw.githubusercontent.com/cognitum-one/.github/${ENFORCEMENT_POLICY_COMMIT}/security/test_verify_workflow_pins.mjs"
+          echo "${WORKFLOW_PIN_POLICY_SHA256}  ${POLICY_DIR}/verify_workflow_pins.mjs" | sha256sum -c -
+          echo "${WORKFLOW_PIN_POLICY_TEST_SHA256}  ${POLICY_DIR}/test_verify_workflow_pins.mjs" | sha256sum -c -
+          node --test "$POLICY_DIR/test_verify_workflow_pins.mjs"
+          node "$POLICY_DIR/verify_workflow_pins.mjs" "$GITHUB_WORKSPACE"
 
   deps:
     name: dependency scan (OSV, fail on High+ fixable)
@@ -584,3 +617,33 @@ jobs:
           GITHUB_WORKFLOW_REF="$GITHUB_WORKFLOW_REF" \
           GITHUB_WORKFLOW_SHA="$GITHUB_WORKFLOW_SHA" \
             python3 "$POLICY_DIR/osv_gate.py"
+
+  enforcement:
+    name: enforcement
+    if: ${{ always() }}
+    needs: [secrets, secrets-history-audit, workflow-pins, deps]
+    runs-on: ${{ github.event.repository.visibility == 'public' && 'ubuntu-latest' || fromJSON('["self-hosted","gcp-bypass"]') }}
+    steps:
+      - name: Evaluate every blocking result with the immutable aggregate gate
+        env:
+          SECRETS_RESULT: ${{ needs.secrets.result }}
+          HISTORY_RESULT: ${{ needs.secrets-history-audit.result }}
+          WORKFLOW_PINS_RESULT: ${{ needs.workflow-pins.result }}
+          DEPENDENCIES_RESULT: ${{ needs.deps.result }}
+        run: |
+          set -euo pipefail
+          POLICY_DIR="$RUNNER_TEMP/security-enforcement-policy"
+          install -d -m 0700 "$POLICY_DIR"
+          curl --proto '=https' --tlsv1.2 -fsSLo "$POLICY_DIR/enforcement_gate.py" \
+            "https://raw.githubusercontent.com/cognitum-one/.github/${ENFORCEMENT_POLICY_COMMIT}/security/enforcement_gate.py"
+          curl --proto '=https' --tlsv1.2 -fsSLo "$POLICY_DIR/test_enforcement_gate.py" \
+            "https://raw.githubusercontent.com/cognitum-one/.github/${ENFORCEMENT_POLICY_COMMIT}/security/test_enforcement_gate.py"
+          echo "${ENFORCEMENT_GATE_SHA256}  ${POLICY_DIR}/enforcement_gate.py" | sha256sum -c -
+          echo "${ENFORCEMENT_GATE_TEST_SHA256}  ${POLICY_DIR}/test_enforcement_gate.py" | sha256sum -c -
+          python3 "$POLICY_DIR/test_enforcement_gate.py"
+          python3 "$POLICY_DIR/enforcement_gate.py" \
+            --event "$GITHUB_EVENT_NAME" \
+            --secrets "$SECRETS_RESULT" \
+            --history "$HISTORY_RESULT" \
+            --workflow-pins "$WORKFLOW_PINS_RESULT" \
+            --dependencies "$DEPENDENCIES_RESULT"
