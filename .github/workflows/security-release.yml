@@ -1,0 +1,109 @@
+name: security-release
+
+# Central release boundary: this workflow deliberately calls the immutable
+# SecurityPolicy/v1 scanner again for the caller's exact candidate. It does not
+# trust an earlier PR result or permit a caller-selected policy mode.
+on:
+  workflow_call:
+    inputs:
+      candidate_sha:
+        description: Exact commit that a release workflow intends to consume.
+        required: true
+        type: string
+    secrets:
+      static_ui_bridge_app_id:
+        required: false
+      static_ui_bridge_app_private_key:
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  security:
+    name: security
+    permissions:
+      contents: read
+    # The evidence-producing scan commit is immutable. The wrapper is a later
+    # commit so the release rerun signal cannot be a caller-provided input.
+    uses: cognitum-one/.github/.github/workflows/security-scan.yml@d0b955de0d8cb2e4a5cf4510d4b49c239bba07f4
+    secrets:
+      static_ui_bridge_app_id: ${{ secrets.static_ui_bridge_app_id }}
+      static_ui_bridge_app_private_key: ${{ secrets.static_ui_bridge_app_private_key }}
+
+  release:
+    name: release exact-candidate security proof
+    if: ${{ always() }}
+    needs: [security]
+    runs-on: ${{ github.event.repository.visibility == 'public' && 'ubuntu-latest' || fromJSON('["self-hosted","gcp-bypass"]') }}
+    env:
+      CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+      SECURITY_RESULT: ${{ needs.security.result }}
+      SECURITY_EVIDENCE: ${{ needs.security.outputs.evidence }}
+      SECURITY_POLICY_SHA256: "e2c02b0d5071ed531824b472f9c8497337f78ed080f79ab5429821701b13607f"
+      SECURITY_POLICY_SCRIPT_SHA256: "a5793c30733e0115e24143b35835a03e2faa181b85a0f9846f08a86a8b9ce69a"
+    steps:
+      - name: Refuse a stale candidate and evaluate the trusted rerun receipt
+        id: release_evidence
+        run: |
+          set -euo pipefail
+          test "$SECURITY_RESULT" = success
+          [[ "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$CANDIDATE_SHA" = "$GITHUB_SHA"
+          test -n "$SECURITY_EVIDENCE"
+          EVIDENCE_DIR="$RUNNER_TEMP/security-release-evidence"
+          install -d -m 0700 "$EVIDENCE_DIR"
+          printf '%s' "$SECURITY_EVIDENCE" | base64 --decode > "$EVIDENCE_DIR/rerun.json"
+          EVIDENCE_DIR="$EVIDENCE_DIR" GITHUB_SHA="$GITHUB_SHA" python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          directory = Path(os.environ["EVIDENCE_DIR"])
+          receipt = json.loads((directory / "rerun.json").read_text(encoding="utf-8"))
+          required = {
+              "schema": "security-evidence-v1",
+              "producer": "cognitum-one/.github/.github/workflows/security-scan.yml",
+              "source_sha": os.environ["GITHUB_SHA"],
+              "verdict": "pass",
+          }
+          if any(receipt.get(key) != value for key, value in required.items()):
+              raise SystemExit("trusted security rerun receipt identity is invalid")
+          controls = {"secrets", "dependencies", "workflow_pins"}
+          if (set(receipt.get("results", {})) != controls or set(receipt.get("findings", {})) != controls
+              or set(receipt.get("completions", {})) != controls):
+              raise SystemExit("trusted security rerun receipt is incomplete")
+          (directory / "results.json").write_text(json.dumps(receipt["results"]), encoding="utf-8")
+          (directory / "findings.json").write_text(json.dumps(receipt["findings"]), encoding="utf-8")
+          (directory / "completions.json").write_text(json.dumps(receipt["completions"]), encoding="utf-8")
+          PY
+          POLICY_COMMIT="d0b955de0d8cb2e4a5cf4510d4b49c239bba07f4"
+          curl --proto '=https' --tlsv1.2 -fsSLo "$EVIDENCE_DIR/security-policy-v1.json" \
+            "https://raw.githubusercontent.com/cognitum-one/.github/${POLICY_COMMIT}/security/security-policy-v1.json"
+          curl --proto '=https' --tlsv1.2 -fsSLo "$EVIDENCE_DIR/security_policy.py" \
+            "https://raw.githubusercontent.com/cognitum-one/.github/${POLICY_COMMIT}/security/security_policy.py"
+          echo "${SECURITY_POLICY_SHA256}  $EVIDENCE_DIR/security-policy-v1.json" | sha256sum -c -
+          echo "${SECURITY_POLICY_SCRIPT_SHA256}  $EVIDENCE_DIR/security_policy.py" | sha256sum -c -
+          python3 "$EVIDENCE_DIR/security_policy.py" \
+            --policy "$EVIDENCE_DIR/security-policy-v1.json" \
+            --policy-sha256 "$SECURITY_POLICY_SHA256" \
+            --repository-id "$GITHUB_REPOSITORY_ID" \
+            --repository "$GITHUB_REPOSITORY" \
+            --source-sha "$GITHUB_SHA" \
+            --workflow-sha "$POLICY_COMMIT" \
+            --producer cognitum-one/.github/.github/workflows/security-scan.yml \
+            --results "$(cat "$EVIDENCE_DIR/results.json")" \
+            --findings "$(cat "$EVIDENCE_DIR/findings.json")" \
+            --completions "$(cat "$EVIDENCE_DIR/completions.json")" \
+            --release-rerun \
+            --release-candidate-sha "$CANDIDATE_SHA" \
+            --output "$EVIDENCE_DIR/security-evidence-v1.json"
+          echo "evidence=$(base64 < "$EVIDENCE_DIR/security-evidence-v1.json" | tr -d '\n')" >> "$GITHUB_OUTPUT"
+
+      - name: Upload exact-candidate release evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: security-release-evidence-v1
+          path: ${{ runner.temp }}/security-release-evidence/security-evidence-v1.json
+          if-no-files-found: error
+          retention-days: 30

@@ -296,7 +296,7 @@ async function yamlFilesBelow(directory) {
   return files;
 }
 
-export async function verifyRepository(root = defaultRoot) {
+export async function collectRepositoryFindings(root = defaultRoot) {
   const files = [
     ...await yamlFilesBelow(join(root, ".github/workflows")),
     ...await yamlFilesBelow(join(root, ".github/actions")),
@@ -318,9 +318,35 @@ export async function verifyRepository(root = defaultRoot) {
     pushFindings.push(...unsafeGitPushes(source, relative(root, file)));
     packageFindings.push(...mutablePackageExecutions(source, relative(root, file)));
   }
+  return [
+    ...findings.map((finding) => ({
+      kind: "mutable-action", path: finding.path, line: finding.line,
+      reason: "mutable action or reusable workflow reference",
+    })),
+    ...credentialFindings.map((finding) => ({
+      kind: "checkout-credentials", path: finding.path, line: finding.line,
+      reason: "checkout may persist a repository credential",
+    })),
+    ...pushFindings.map((finding) => ({
+      kind: "unsafe-git-push", path: finding.path, line: finding.line,
+      reason: finding.reason,
+    })),
+    ...packageFindings.map((finding) => ({
+      kind: "mutable-package", path: finding.path, line: finding.line,
+      reason: finding.reason,
+    })),
+  ];
+}
+
+export async function verifyRepository(root = defaultRoot) {
+  const allFindings = await collectRepositoryFindings(root);
+  const findings = allFindings.filter((finding) => finding.kind === "mutable-action");
+  const credentialFindings = allFindings.filter((finding) => finding.kind === "checkout-credentials");
+  const pushFindings = allFindings.filter((finding) => finding.kind === "unsafe-git-push");
+  const packageFindings = allFindings.filter((finding) => finding.kind === "mutable-package");
   if (findings.length > 0) {
     for (const finding of findings) {
-      console.error(`${finding.path}:${finding.line}: mutable action reference ${finding.reference}`);
+      console.error(`${finding.path}:${finding.line}: mutable action reference`);
     }
     throw new Error(`${findings.length} mutable GitHub Actions reference(s) found`);
   }
@@ -343,18 +369,20 @@ export async function verifyRepository(root = defaultRoot) {
   if (packageFindings.length > 0) {
     for (const finding of packageFindings) {
       console.error(
-        `${finding.path}:${finding.line}: mutable package execution ${finding.reference} (${finding.reason})`,
+        `${finding.path}:${finding.line}: mutable package execution (${finding.reason})`,
       );
     }
     throw new Error(
       `${packageFindings.length} mutable package execution(s) found`,
     );
   }
-  console.log(`workflow pin policy: ${files.length} files passed`);
+  console.log("workflow pin policy: passed");
 }
 
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  const root = process.argv[2] ? resolve(process.argv[2]) : defaultRoot;
-  await verifyRepository(root);
+  const json = process.argv[2] === "--findings-json";
+  const root = process.argv[json ? 3 : 2] ? resolve(process.argv[json ? 3 : 2]) : defaultRoot;
+  if (json) console.log(JSON.stringify(await collectRepositoryFindings(root)));
+  else await verifyRepository(root);
 }

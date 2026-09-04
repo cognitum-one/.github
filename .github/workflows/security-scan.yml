@@ -44,6 +44,10 @@ on:
           GitHub App private key used only by the pinned token-minting action.
           Required only when the caller is cognitum-one/website.
         required: false
+    outputs:
+      evidence:
+        description: Base64 SecurityPolicy/v1 receipt emitted by the trusted enforcement job.
+        value: ${{ jobs.enforcement.outputs.evidence }}
 
 permissions:
   contents: read
@@ -69,6 +73,11 @@ env:
   WORKFLOW_PIN_POLICY_TEST_SHA256: "b150e09b26661567b76a40287587935adc1e21e929d0dab6a3d1a01cf4892e37"
   ENFORCEMENT_GATE_SHA256: "09f8ef9671bd420cca2d6a09ca4d0cb642f1920dc46ab237e738480c047cffac"
   ENFORCEMENT_GATE_TEST_SHA256: "d9b3a0dc351c58f22c567a6b8042997f1242ad8c9c6d9af739afaf3e832b6ab1"
+  SECURITY_POLICY_SHA256: "e2c02b0d5071ed531824b472f9c8497337f78ed080f79ab5429821701b13607f"
+  SECURITY_POLICY_SCRIPT_SHA256: "a5793c30733e0115e24143b35835a03e2faa181b85a0f9846f08a86a8b9ce69a"
+  SECURITY_POLICY_TEST_SHA256: "7f0f487edd084fa92584f4d55cba9fadfbb4d3c1504a3bd8436ddcceed340c17"
+  SECURITY_FINDINGS_SHA256: "dae758c367e5a6855b6ec494105162cbfab9fe479aa6dddd7901f845311cc9db"
+  SECURITY_WORKFLOW_FINDINGS_SHA256: "6069d449f1fb848c34ed4d84f5cd21f3616acb68156058a1bea0e2951abc76ba"
 
 jobs:
   # runs-on below: the gcp-bypass fleet exists to keep PRIVATE repos scanning
@@ -82,6 +91,9 @@ jobs:
   # instead; private callers keep the fleet.
   secrets:
     name: secret scan (current files)
+    outputs:
+      findings: ${{ steps.findings.outputs.json }}
+      completion: ${{ steps.findings.outputs.completion }}
     runs-on: ${{ github.event.repository.visibility == 'public' && 'ubuntu-latest' || fromJSON('["self-hosted","gcp-bypass"]') }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
@@ -119,6 +131,7 @@ jobs:
           fi
           echo "scan target: $(du -sh . | cut -f1) across $(git ls-files | wc -l) tracked files"
       - name: Run gitleaks (current files, blocking)
+        id: findings
         run: |
           set -euo pipefail
           # The candidate must not be able to replace its own security policy.
@@ -140,8 +153,34 @@ jobs:
           "$GITLEAKS_BIN" version | grep -F "$GITLEAKS_VERSION"
           # --no-git: scan the working tree (current files) only. Blocks new
           # secrets; ignores older commits (those are the history audit's job).
+          REPORT="$RUNNER_TEMP/gitleaks-current.json"
           "$GITLEAKS_BIN" detect --source . --no-git \
-            --config "$ORG_CONFIG" --redact --exit-code 1
+            --config "$ORG_CONFIG" --redact --report-format json \
+            --report-path "$REPORT" --exit-code 0
+          case "$GITHUB_WORKFLOW_REF" in
+            cognitum-one/.github/.github/workflows/security-scan.yml@[0-9a-f][0-9a-f]*) POLICY_COMMIT="${GITHUB_WORKFLOW_REF##*@}" ;;
+            *) echo "::error::SecurityPolicy/v1 scanner provenance is not immutable."; exit 1 ;;
+          esac
+          [[ "$POLICY_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          FINDINGS_TOOL="$RUNNER_TEMP/security_findings.py"
+          curl --proto '=https' --tlsv1.2 -fsSLo "$FINDINGS_TOOL" \
+            "https://raw.githubusercontent.com/cognitum-one/.github/${POLICY_COMMIT}/security/security_findings.py"
+          echo "${SECURITY_FINDINGS_SHA256}  ${FINDINGS_TOOL}" | sha256sum -c -
+          FINDINGS="$(python3 "$FINDINGS_TOOL" --control secrets --report "$REPORT")"
+          echo "json=$FINDINGS" >> "$GITHUB_OUTPUT"
+          COMPLETION="$(FINDINGS="$FINDINGS" CONTROL=secrets POLICY_COMMIT="$POLICY_COMMIT" python3 - <<'PY'
+          import json
+          import os
+          print(json.dumps({
+              "schema": "security-producer-evidence-v1",
+              "producer": "cognitum-one/.github/.github/workflows/security-scan.yml#" + os.environ["CONTROL"],
+              "control": os.environ["CONTROL"], "source_sha": os.environ["GITHUB_SHA"],
+              "workflow_sha": os.environ["POLICY_COMMIT"], "state": "completed",
+              "findings": json.loads(os.environ["FINDINGS"]),
+          }, separators=(",", ":")))
+          PY
+          )"
+          echo "completion=$COMPLETION" >> "$GITHUB_OUTPUT"
 
   secrets-history-audit:
     name: secret scan (full history audit)
@@ -221,6 +260,9 @@ jobs:
 
   workflow-pins:
     name: workflow supply-chain policy
+    outputs:
+      findings: ${{ steps.findings.outputs.json }}
+      completion: ${{ steps.findings.outputs.completion }}
     runs-on: ${{ github.event.repository.visibility == 'public' && 'ubuntu-latest' || fromJSON('["self-hosted","gcp-bypass"]') }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
@@ -239,11 +281,48 @@ jobs:
           echo "${WORKFLOW_PIN_POLICY_SHA256}  ${POLICY_DIR}/verify_workflow_pins.mjs" | sha256sum -c -
           echo "${WORKFLOW_PIN_POLICY_TEST_SHA256}  ${POLICY_DIR}/test_verify_workflow_pins.mjs" | sha256sum -c -
           node --test "$POLICY_DIR/test_verify_workflow_pins.mjs"
-          node "$POLICY_DIR/verify_workflow_pins.mjs" "$GITHUB_WORKSPACE"
+
+      - name: Normalize workflow supply-chain findings before enforcing
+        id: findings
+        run: |
+          set -euo pipefail
+          FINDINGS_VERIFIER="$RUNNER_TEMP/verify_workflow_pins.mjs"
+          case "$GITHUB_WORKFLOW_REF" in
+            cognitum-one/.github/.github/workflows/security-scan.yml@[0-9a-f][0-9a-f]*) POLICY_COMMIT="${GITHUB_WORKFLOW_REF##*@}" ;;
+            *) echo "::error::SecurityPolicy/v1 scanner provenance is not immutable."; exit 1 ;;
+          esac
+          [[ "$POLICY_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          FINDINGS_TOOL="$RUNNER_TEMP/security_findings.py"
+          curl --proto '=https' --tlsv1.2 -fsSLo "$FINDINGS_VERIFIER" \
+            "https://raw.githubusercontent.com/cognitum-one/.github/${POLICY_COMMIT}/security/verify_workflow_pins.mjs"
+          curl --proto '=https' --tlsv1.2 -fsSLo "$FINDINGS_TOOL" \
+            "https://raw.githubusercontent.com/cognitum-one/.github/${POLICY_COMMIT}/security/security_findings.py"
+          echo "${SECURITY_WORKFLOW_FINDINGS_SHA256}  ${FINDINGS_VERIFIER}" | sha256sum -c -
+          echo "${SECURITY_FINDINGS_SHA256}  ${FINDINGS_TOOL}" | sha256sum -c -
+          node "$FINDINGS_VERIFIER" --findings-json "$GITHUB_WORKSPACE" \
+            > "$RUNNER_TEMP/workflow-pin-findings.json"
+          FINDINGS="$(python3 "$FINDINGS_TOOL" --control workflow_pins --report "$RUNNER_TEMP/workflow-pin-findings.json")"
+          echo "json=$FINDINGS" >> "$GITHUB_OUTPUT"
+          COMPLETION="$(FINDINGS="$FINDINGS" CONTROL=workflow_pins POLICY_COMMIT="$POLICY_COMMIT" python3 - <<'PY'
+          import json
+          import os
+          print(json.dumps({
+              "schema": "security-producer-evidence-v1",
+              "producer": "cognitum-one/.github/.github/workflows/security-scan.yml#" + os.environ["CONTROL"],
+              "control": os.environ["CONTROL"], "source_sha": os.environ["GITHUB_SHA"],
+              "workflow_sha": os.environ["POLICY_COMMIT"], "state": "completed",
+              "findings": json.loads(os.environ["FINDINGS"]),
+          }, separators=(",", ":")))
+          PY
+          )"
+          echo "completion=$COMPLETION" >> "$GITHUB_OUTPUT"
 
   deps:
     name: dependency scan (OSV, fail on High+ fixable)
     runs-on: ${{ github.event.repository.visibility == 'public' && 'ubuntu-latest' || fromJSON('["self-hosted","gcp-bypass"]') }}
+    outputs:
+      findings: ${{ steps.findings.outputs.json }}
+      completion: ${{ steps.findings.outputs.completion }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
@@ -599,9 +678,45 @@ jobs:
             --config "$POLICY_DIR/osv-scanner.toml" \
             --report "$OSV_REPORT" \
             --repository-root "$GITHUB_WORKSPACE"
+
+      - name: Normalize dependency findings before enforcing
+        id: findings
+        run: |
+          set -euo pipefail
+          case "$GITHUB_WORKFLOW_REF" in
+            cognitum-one/.github/.github/workflows/security-scan.yml@[0-9a-f][0-9a-f]*) POLICY_COMMIT="${GITHUB_WORKFLOW_REF##*@}" ;;
+            *) echo "::error::SecurityPolicy/v1 scanner provenance is not immutable."; exit 1 ;;
+          esac
+          [[ "$POLICY_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          FINDINGS_TOOL="$RUNNER_TEMP/security_findings.py"
+          curl --proto '=https' --tlsv1.2 -fsSLo "$FINDINGS_TOOL" \
+            "https://raw.githubusercontent.com/cognitum-one/.github/${POLICY_COMMIT}/security/security_findings.py"
+          echo "${SECURITY_FINDINGS_SHA256}  ${FINDINGS_TOOL}" | sha256sum -c -
+          FINDINGS="$(python3 "$FINDINGS_TOOL" --control dependencies --report "$RUNNER_TEMP/osv-report.json")"
+          echo "json=$FINDINGS" >> "$GITHUB_OUTPUT"
+          COMPLETION="$(FINDINGS="$FINDINGS" CONTROL=dependencies POLICY_COMMIT="$POLICY_COMMIT" python3 - <<'PY'
+          import json
+          import os
+          print(json.dumps({
+              "schema": "security-producer-evidence-v1",
+              "producer": "cognitum-one/.github/.github/workflows/security-scan.yml#" + os.environ["CONTROL"],
+              "control": os.environ["CONTROL"], "source_sha": os.environ["GITHUB_SHA"],
+              "workflow_sha": os.environ["POLICY_COMMIT"], "state": "completed",
+              "findings": json.loads(os.environ["FINDINGS"]),
+          }, separators=(",", ":")))
+          PY
+          )"
+          echo "completion=$COMPLETION" >> "$GITHUB_OUTPUT"
+
+      - name: Enforce OSV dependency policy
+        run: |
+          set -euo pipefail
+          POLICY_DIR="$RUNNER_TEMP/osv-policy"
+          OSV_REPORT="$RUNNER_TEMP/osv-report.json"
           # Gate: fail on High/Critical (CVSS>=7) fixable vulns that can SHIP.
           # The exact, expiring React Router 7.18.2 OSV range correction is
           # independently pinned organization policy; every other finding blocks.
+          set +e
           OSV_REPORT="$OSV_REPORT" \
           OSV_REPOSITORY_ROOT="$GITHUB_WORKSPACE" \
           OSV_RUNTIME_RECEIPT="${{ steps.runtime.outputs.receipt }}" \
@@ -617,33 +732,99 @@ jobs:
           GITHUB_WORKFLOW_REF="$GITHUB_WORKFLOW_REF" \
           GITHUB_WORKFLOW_SHA="$GITHUB_WORKFLOW_SHA" \
             python3 "$POLICY_DIR/osv_gate.py"
+          gate_status=$?
+          set -e
+          if [ "$gate_status" -eq 1 ]; then
+            # Exit 1 is the gate's documented finding verdict. The central
+            # policy owns whether this completed finding blocks a profile.
+            test "${{ steps.findings.outputs.json }}" != '[]'
+          elif [ "$gate_status" -ne 0 ]; then
+            # Exit 2 is malformed report/runtime receipt/nonce/image evidence
+            # or another execution-integrity fault: never reinterpret it as a
+            # finding merely because the report happens to be nonempty.
+            exit "$gate_status"
+          fi
 
   enforcement:
     name: enforcement
     if: ${{ always() }}
     needs: [secrets, secrets-history-audit, workflow-pins, deps]
+    outputs:
+      evidence: ${{ steps.policy.outputs.evidence }}
     runs-on: ${{ github.event.repository.visibility == 'public' && 'ubuntu-latest' || fromJSON('["self-hosted","gcp-bypass"]') }}
     steps:
-      - name: Evaluate every blocking result with the immutable aggregate gate
+      - name: Evaluate immutable SecurityPolicy/v1 and write evidence receipt
+        id: policy
         env:
           SECRETS_RESULT: ${{ needs.secrets.result }}
           HISTORY_RESULT: ${{ needs.secrets-history-audit.result }}
           WORKFLOW_PINS_RESULT: ${{ needs.workflow-pins.result }}
           DEPENDENCIES_RESULT: ${{ needs.deps.result }}
+          SECRETS_FINDINGS: ${{ needs.secrets.outputs.findings }}
+          WORKFLOW_PINS_FINDINGS: ${{ needs.workflow-pins.outputs.findings }}
+          DEPENDENCIES_FINDINGS: ${{ needs.deps.outputs.findings }}
+          SECRETS_COMPLETION: ${{ needs.secrets.outputs.completion }}
+          WORKFLOW_PINS_COMPLETION: ${{ needs.workflow-pins.outputs.completion }}
+          DEPENDENCIES_COMPLETION: ${{ needs.deps.outputs.completion }}
         run: |
           set -euo pipefail
-          POLICY_DIR="$RUNNER_TEMP/security-enforcement-policy"
+          case "$GITHUB_WORKFLOW_REF" in
+            cognitum-one/.github/.github/workflows/security-scan.yml@[0-9a-f][0-9a-f]*)
+              POLICY_COMMIT="${GITHUB_WORKFLOW_REF##*@}"
+              ;;
+            *)
+              echo "::error::SecurityPolicy/v1 requires this reusable workflow to be full-SHA pinned."
+              exit 1
+              ;;
+          esac
+          [[ "$POLICY_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          POLICY_DIR="$RUNNER_TEMP/security-policy-v1"
           install -d -m 0700 "$POLICY_DIR"
-          curl --proto '=https' --tlsv1.2 -fsSLo "$POLICY_DIR/enforcement_gate.py" \
-            "https://raw.githubusercontent.com/cognitum-one/.github/${ENFORCEMENT_POLICY_COMMIT}/security/enforcement_gate.py"
-          curl --proto '=https' --tlsv1.2 -fsSLo "$POLICY_DIR/test_enforcement_gate.py" \
-            "https://raw.githubusercontent.com/cognitum-one/.github/${ENFORCEMENT_POLICY_COMMIT}/security/test_enforcement_gate.py"
-          echo "${ENFORCEMENT_GATE_SHA256}  ${POLICY_DIR}/enforcement_gate.py" | sha256sum -c -
-          echo "${ENFORCEMENT_GATE_TEST_SHA256}  ${POLICY_DIR}/test_enforcement_gate.py" | sha256sum -c -
-          python3 "$POLICY_DIR/test_enforcement_gate.py"
-          python3 "$POLICY_DIR/enforcement_gate.py" \
-            --event "$GITHUB_EVENT_NAME" \
-            --secrets "$SECRETS_RESULT" \
-            --history "$HISTORY_RESULT" \
-            --workflow-pins "$WORKFLOW_PINS_RESULT" \
-            --dependencies "$DEPENDENCIES_RESULT"
+          curl --proto '=https' --tlsv1.2 -fsSLo "$POLICY_DIR/security-policy-v1.json" \
+            "https://raw.githubusercontent.com/cognitum-one/.github/${POLICY_COMMIT}/security/security-policy-v1.json"
+          curl --proto '=https' --tlsv1.2 -fsSLo "$POLICY_DIR/security_policy.py" \
+            "https://raw.githubusercontent.com/cognitum-one/.github/${POLICY_COMMIT}/security/security_policy.py"
+          curl --proto '=https' --tlsv1.2 -fsSLo "$POLICY_DIR/test_security_policy.py" \
+            "https://raw.githubusercontent.com/cognitum-one/.github/${POLICY_COMMIT}/security/test_security_policy.py"
+          echo "${SECURITY_POLICY_SHA256}  ${POLICY_DIR}/security-policy-v1.json" | sha256sum -c -
+          echo "${SECURITY_POLICY_SCRIPT_SHA256}  ${POLICY_DIR}/security_policy.py" | sha256sum -c -
+          echo "${SECURITY_POLICY_TEST_SHA256}  ${POLICY_DIR}/test_security_policy.py" | sha256sum -c -
+          python3 "$POLICY_DIR/test_security_policy.py"
+          expected_history=skipped
+          if [ "$GITHUB_EVENT_NAME" = schedule ] || [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            expected_history=success
+          fi
+          test "$HISTORY_RESULT" = "$expected_history"
+          RECEIPT="$RUNNER_TEMP/security-evidence-v1.json"
+          echo "receipt=$RECEIPT" >> "$GITHUB_OUTPUT"
+          python3 "$POLICY_DIR/security_policy.py" \
+            --policy "$POLICY_DIR/security-policy-v1.json" \
+            --policy-sha256 "$SECURITY_POLICY_SHA256" \
+            --repository-id "$GITHUB_REPOSITORY_ID" \
+            --repository "$GITHUB_REPOSITORY" \
+            --source-sha "$GITHUB_SHA" \
+            --workflow-sha "$POLICY_COMMIT" \
+            --producer cognitum-one/.github/.github/workflows/security-scan.yml \
+            --results "{\"secrets\":\"$SECRETS_RESULT\",\"dependencies\":\"$DEPENDENCIES_RESULT\",\"workflow_pins\":\"$WORKFLOW_PINS_RESULT\"}" \
+            --findings "{\"secrets\":${SECRETS_FINDINGS:-null},\"dependencies\":${DEPENDENCIES_FINDINGS:-null},\"workflow_pins\":${WORKFLOW_PINS_FINDINGS:-null}}" \
+            --completions "{\"secrets\":${SECRETS_COMPLETION:-null},\"dependencies\":${DEPENDENCIES_COMPLETION:-null},\"workflow_pins\":${WORKFLOW_PINS_COMPLETION:-null}}" \
+            --output "$RECEIPT"
+          POLICY_OUTPUT="$(RECEIPT="$RECEIPT" python3 - <<'PY'
+          import json
+          import os
+          receipt = json.load(open(os.environ["RECEIPT"], encoding="utf-8"))
+          for name in ("policy_revision", "repository_id", "source_sha", "workflow_sha", "verdict"):
+              print(f"{name}={receipt[name]}")
+          PY
+          )"
+          printf '%s\n' "$POLICY_OUTPUT" >> "$GITHUB_OUTPUT"
+          echo "evidence=$(base64 < "$RECEIPT" | tr -d '\n')" >> "$GITHUB_OUTPUT"
+
+      - name: Upload SecurityPolicy/v1 machine-readable evidence
+        if: ${{ always() && steps.policy.outputs.receipt != '' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: security-evidence-v1
+          path: ${{ steps.policy.outputs.receipt }}
+          if-no-files-found: error
+          retention-days: 30

@@ -66,6 +66,32 @@ deliberately left as a named follow-up rather than done quietly.
 3. **Org sweep** — the weekly `schedule:` trigger gives every repo a recurring
    drift check; results feed the weekly QE report.
 
+## SecurityPolicy/v1 and evidence receipts
+
+The aggregate job remains named `enforcement`, preserving the stable
+`security / enforcement` context. Its control mode is now selected only by the
+organization-owned `security/security-policy-v1.json` registry, keyed by the
+immutable GitHub repository numeric ID. A caller cannot pass a mode or baseline
+as an input. The four current pilot IDs are Cognitum, Website, University, and
+Consultants; an unregistered repository uses the existing all-`enforce` strict
+profile.
+
+Profiles may mix `observe`, `ratchet`, `enforce`, and `release`. A ratchet
+accepts only findings in an organization-owned, explicitly owned, finite
+baseline; new findings and an expired baseline fail closed. Release controls
+require an independent re-run bound to the exact candidate SHA. Release
+workflows call the organization `security-release.yml` wrapper, which invokes
+the full-SHA-pinned scanner again and refuses a stale candidate or failed rerun.
+The policy
+loader verifies the registry bytes against a SHA-256 embedded in the immutable
+workflow before it evaluates any result.
+
+Every evaluated run uploads `security-evidence-v1.json` as the
+`security-evidence-v1` artifact. It records the policy revision, immutable
+repository ID, source and workflow SHA, producer, per-control results and
+findings, baseline matches, exceptions/expiry, and verdict. It is evidence for
+that exact run, not permission to alter rulesets or deploy production.
+
 ## Required contexts and bypass boundary
 
 For an ordinary deployable repository, the target-branch ruleset should require:
