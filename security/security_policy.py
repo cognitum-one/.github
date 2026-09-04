@@ -93,14 +93,48 @@ def resolve_profile(policy: dict[str, Any], repository_id: str, repository: str)
 
 def _active_baselines(
     policy: dict[str, Any], repository_id: str, today: dt.date
-) -> dict[str, dict[str, list[dict[str, str]]]]:
-    active: dict[str, dict[str, list[dict[str, str]]]] = {}
+) -> dict[str, dict[str, list[dict[str, Any]]]]:
+    active: dict[str, dict[str, list[dict[str, Any]]]] = {}
     for baseline in policy["baselines"]:
         if not isinstance(baseline, dict):
             raise PolicyError("baseline is invalid")
-        required = ("id", "repository_id", "control", "owner", "expires_at", "findings")
+        required = ("id", "repository_id", "control", "owner", "expires_at", "evidence", "findings")
         if any(not baseline.get(key) for key in required):
-            raise PolicyError("baseline must be owned, finite, and identified")
+            raise PolicyError("baseline must be owned, finite, identified, and evidenced")
+        if (
+            not isinstance(baseline["id"], str)
+            or not isinstance(baseline["repository_id"], str)
+            or not isinstance(baseline["control"], str)
+            or not isinstance(baseline["owner"], str)
+            or baseline["control"] not in policy["controls"]
+        ):
+            raise PolicyError("baseline identity is invalid")
+        evidence = baseline["evidence"]
+        if (
+            not isinstance(evidence, dict)
+            or not isinstance(evidence.get("repository"), str)
+            or not isinstance(evidence.get("pull_request"), int)
+            or evidence["pull_request"] <= 0
+            or not isinstance(evidence.get("run_id"), str)
+            or not evidence["run_id"].isdigit()
+            or not isinstance(evidence.get("source_sha"), str)
+            or not SHA_RE.fullmatch(evidence["source_sha"])
+            or not isinstance(evidence.get("base_sha"), str)
+            or not SHA_RE.fullmatch(evidence["base_sha"])
+            or not isinstance(evidence.get("workflow_sha"), str)
+            or not SHA_RE.fullmatch(evidence["workflow_sha"])
+            or not isinstance(evidence.get("lockfile_blobs"), dict)
+            or not evidence["lockfile_blobs"]
+            or any(
+                not isinstance(path, str)
+                or not path
+                or Path(path).is_absolute()
+                or not isinstance(blob, str)
+                or not SHA_RE.fullmatch(blob)
+                for path, blob in evidence["lockfile_blobs"].items()
+            )
+        ):
+            raise PolicyError("baseline evidence is invalid")
         if baseline["repository_id"] != repository_id:
             continue
         try:
@@ -119,6 +153,7 @@ def _active_baselines(
                     "id": baseline["id"],
                     "owner": baseline["owner"],
                     "expires_at": baseline["expires_at"],
+                    "evidence": evidence,
                 }
             )
     return active

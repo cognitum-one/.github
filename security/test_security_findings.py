@@ -3,6 +3,9 @@
 
 from __future__ import annotations
 
+import hashlib
+from pathlib import Path
+import tempfile
 import unittest
 
 from security_findings import FindingsError, normalize
@@ -21,6 +24,17 @@ class SecurityFindingsTests(unittest.TestCase):
         self.assertEqual(len(normalize("dependencies", osv)), 1)
         workflow = [{"kind": "action", "path": ".github/a.yml", "line": 5, "reason": "mutable"}]
         self.assertTrue(normalize("workflow_pins", workflow)[0].startswith("workflow_pins:"))
+
+    def test_osv_absolute_workspace_source_is_canonicalized_before_hashing(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            report = {"results": [{"source": {"path": str(root / "functions/package-lock.json")}, "packages": [{"package": {"name": "fast-uri", "version": "3.1.5"}, "vulnerabilities": [{"id": "GHSA-test"}]}]}]}
+            expected = "dependencies:" + hashlib.sha256(
+                "\0".join(("functions/package-lock.json", "fast-uri", "3.1.5", "GHSA-test")).encode()
+            ).hexdigest()
+            self.assertEqual(normalize("dependencies", report, repository_root=root), [expected])
+            with self.assertRaisesRegex(FindingsError, "repository root"):
+                normalize("dependencies", report)
 
     def test_missing_or_malformed_reports_fail_closed(self) -> None:
         with self.assertRaises(FindingsError):

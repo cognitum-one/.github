@@ -28,7 +28,34 @@ def _identifier(control: str, fields: list[str]) -> str:
     return f"{control}:{hashlib.sha256(encoded).hexdigest()}"
 
 
-def normalize(control: str, report: Any) -> list[str]:
+def _dependency_source_path(source: str, repository_root: Path | None) -> str:
+    """Return a workspace-independent lockfile identity.
+
+    OSV reports an absolute source path when it is invoked from a checked-out
+    workspace.  Runner-specific prefixes must never become part of a ratchet
+    identity: the same lockfile would otherwise look new on the next runner.
+    The trusted workflow supplies its checked-out repository root and refuses
+    a report that names a source outside that root.
+    """
+
+    candidate = Path(source)
+    if repository_root is None:
+        if candidate.is_absolute():
+            raise FindingsError("OSV source requires a repository root for canonicalization")
+        return candidate.as_posix()
+    try:
+        root = repository_root.resolve(strict=True)
+        relative = candidate.resolve(strict=False).relative_to(root)
+    except (OSError, ValueError) as error:
+        raise FindingsError("OSV source is outside the repository root") from error
+    if not relative.parts or relative == Path("."):
+        raise FindingsError("OSV source is not a lockfile path")
+    return relative.as_posix()
+
+
+def normalize(
+    control: str, report: Any, *, repository_root: Path | None = None
+) -> list[str]:
     records: list[list[str]] = []
     if control == "secrets":
         if not isinstance(report, list):
@@ -46,6 +73,7 @@ def normalize(control: str, report: Any) -> list[str]:
             source = result.get("source", {}) if isinstance(result, dict) else {}
             if not isinstance(source, dict) or not isinstance(source.get("path"), str):
                 raise FindingsError("OSV source is malformed")
+            source_path = _dependency_source_path(source["path"], repository_root)
             packages = result.get("packages")
             if not isinstance(packages, list):
                 raise FindingsError("OSV packages are malformed")
@@ -59,7 +87,7 @@ def normalize(control: str, report: Any) -> list[str]:
                 for vulnerability in vulnerabilities:
                     if not isinstance(vulnerability, dict) or not isinstance(vulnerability.get("id"), str):
                         raise FindingsError("OSV vulnerability is malformed")
-                    records.append([source["path"], identity["name"], identity["version"], vulnerability["id"]])
+                    records.append([source_path, identity["name"], identity["version"], vulnerability["id"]])
     elif control == "workflow_pins":
         if not isinstance(report, list):
             raise FindingsError("workflow finding report is not an array")
@@ -78,8 +106,12 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--control", choices=("secrets", "dependencies", "workflow_pins"), required=True)
     parser.add_argument("--report", type=Path, required=True)
+    parser.add_argument("--repository-root", type=Path)
     args = parser.parse_args()
-    print(json.dumps(normalize(args.control, _load(args.report)), separators=(",", ":")))
+    print(json.dumps(
+        normalize(args.control, _load(args.report), repository_root=args.repository_root),
+        separators=(",", ":"),
+    ))
 
 
 if __name__ == "__main__":

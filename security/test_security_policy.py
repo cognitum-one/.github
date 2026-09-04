@@ -11,6 +11,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
+from security_findings import normalize
 from security_policy import PolicyError, evaluate, load_policy
 
 
@@ -45,6 +46,28 @@ class SecurityPolicyTests(unittest.TestCase):
 
     def _with_findings(self, findings: dict[str, list[str]], **overrides: object) -> dict[str, object]:
         return dict(self.good, findings=findings, completions=self._completions(findings), **overrides)
+
+    def _baseline(
+        self, *, repository_id: str = "1211713708", finding: str = "GHSA-old",
+        expires_at: str = "2026-09-30",
+    ) -> dict[str, object]:
+        return {
+            "id": "owned",
+            "repository_id": repository_id,
+            "control": "dependencies",
+            "owner": "security",
+            "expires_at": expires_at,
+            "evidence": {
+                "repository": "cognitum-one/cognitum",
+                "pull_request": 1,
+                "run_id": "1",
+                "source_sha": "c" * 40,
+                "base_sha": "d" * 40,
+                "workflow_sha": "e" * 40,
+                "lockfile_blobs": {"package-lock.json": "f" * 40},
+            },
+            "findings": [finding],
+        }
 
     def test_registered_id_selects_mixed_centrally_owned_profile(self) -> None:
         receipt = evaluate(**self.good)
@@ -92,23 +115,91 @@ class SecurityPolicyTests(unittest.TestCase):
 
     def test_expired_owned_baseline_blocks(self) -> None:
         policy = copy.deepcopy(self.policy)
-        policy["baselines"] = [{"id": "old", "repository_id": "1211713708", "control": "dependencies", "owner": "security", "expires_at": "2026-09-04", "findings": ["GHSA-old"]}]
+        policy["baselines"] = [self._baseline(expires_at="2026-09-04")]
         with self.assertRaisesRegex(PolicyError, "expired"):
             evaluate(**self._with_findings({"secrets": [], "dependencies": ["GHSA-old"], "workflow_pins": []}, policy=policy))
 
     def test_owned_baseline_receipt_records_its_expiry(self) -> None:
         policy = copy.deepcopy(self.policy)
-        policy["baselines"] = [{"id": "owned", "repository_id": "1211713708", "control": "dependencies", "owner": "security", "expires_at": "2026-09-30", "findings": ["GHSA-old"]}]
+        policy["baselines"] = [self._baseline()]
         receipt = evaluate(**self._with_findings({"secrets": [], "dependencies": ["GHSA-old"], "workflow_pins": []}, policy=policy))
         self.assertEqual(receipt["verdict"], "pass")
         self.assertEqual(receipt["exceptions"][0]["baselines"]["GHSA-old"][0]["expires_at"], "2026-09-30")
+        self.assertEqual(receipt["exceptions"][0]["baselines"]["GHSA-old"][0]["evidence"]["run_id"], "1")
 
     def test_foreign_baseline_cannot_match_a_pilot_finding(self) -> None:
         policy = copy.deepcopy(self.policy)
-        policy["baselines"] = [{"id": "foreign", "repository_id": "1235738436", "control": "dependencies", "owner": "security", "expires_at": "2026-09-30", "findings": ["GHSA-old"]}]
+        policy["baselines"] = [self._baseline(repository_id="1235738436")]
         receipt = evaluate(**self._with_findings({"secrets": [], "dependencies": ["GHSA-old"], "workflow_pins": []}, policy=policy))
         self.assertEqual(receipt["verdict"], "fail")
         self.assertEqual(receipt["baseline_matches"]["dependencies"], [])
+
+    def test_website_owned_baseline_matches_only_its_exact_finding_set(self) -> None:
+        baseline = self.policy["baselines"][0]
+        self.assertEqual(baseline["id"], "website-dependencies-20260904")
+        self.assertEqual(baseline["repository_id"], "1235738436")
+        self.assertEqual(baseline["expires_at"], "2026-10-04")
+        self.assertEqual(baseline["evidence"]["run_id"], "33853258319")
+        self.assertEqual(baseline["evidence"]["lockfile_blobs"], {
+            "package-lock.json": "c03fd819551cfb456058c0833807fe89a1f9ad8b",
+            "functions/package-lock.json": "dc10bd277e49e2b8c1a35b2e254c4f5d6bdd7d2b",
+            "apps/news/package-lock.json": "69573f4c5b6e3d6f80ab831381762ed2063ab747",
+            "management-ui/package-lock.json": "c8be21b55d8da9c165d780be920c997f03899943",
+        })
+        self.assertEqual(len(baseline["findings"]), 14)
+        historic_report = {
+            "results": [
+                {
+                    "source": {"path": source},
+                    "packages": [{
+                        "package": {"name": "fast-uri", "version": "3.1.5"},
+                        "vulnerabilities": [{"id": advisory} for advisory in (
+                            "GHSA-5jgf-p345-68v8", "GHSA-f65p-4m7j-42xc",
+                            "GHSA-fph4-wmhf-6fwf", "GHSA-jqff-g426-hqxp",
+                        )],
+                    }],
+                }
+                for source in ("package-lock.json", "functions/package-lock.json", "apps/news/package-lock.json")
+            ] + [{
+                "source": {"path": "package-lock.json"},
+                "packages": [{
+                    "package": {"name": "fflate", "version": version},
+                    "vulnerabilities": [{"id": "GHSA-px8p-9vwx-vf98"}],
+                } for version in ("0.6.10", "0.8.2")],
+            }],
+        }
+        self.assertEqual(normalize("dependencies", historic_report), baseline["findings"])
+        findings = {"secrets": [], "dependencies": baseline["findings"], "workflow_pins": []}
+        data = self._with_findings(
+            findings, repository_id="1235738436", repository="cognitum-one/website"
+        )
+        receipt = evaluate(**data)
+        self.assertEqual(receipt["verdict"], "pass")
+        self.assertEqual(receipt["baseline_matches"]["dependencies"], baseline["findings"])
+        receipt = evaluate(**self._with_findings(
+            {"secrets": [], "dependencies": [*baseline["findings"], "dependencies:new"], "workflow_pins": []},
+            repository_id="1235738436", repository="cognitum-one/website",
+        ))
+        self.assertEqual(receipt["verdict"], "fail")
+        self.assertIn("dependencies:new", receipt["blocking"][0])
+
+    def test_website_baseline_never_downgrades_secrets_or_workflow_pins(self) -> None:
+        baseline = self.policy["baselines"][0]["findings"]
+        for control, finding in (("secrets", "secrets:known"), ("workflow_pins", "workflow_pins:mutable")):
+            with self.subTest(control=control):
+                findings = {"secrets": [], "dependencies": baseline, "workflow_pins": []}
+                findings[control] = [finding]
+                receipt = evaluate(**self._with_findings(
+                    findings, repository_id="1235738436", repository="cognitum-one/website",
+                ))
+                self.assertEqual(receipt["verdict"], "fail")
+                self.assertIn(control, receipt["blocking"][0])
+
+    def test_caller_has_no_mode_or_baseline_downgrade_input(self) -> None:
+        with self.assertRaises(TypeError):
+            evaluate(**dict(self.good, mode="observe"))
+        with self.assertRaises(TypeError):
+            evaluate(**dict(self.good, baseline=[]))
 
     def test_missing_finding_evidence_fails_closed(self) -> None:
         with self.assertRaisesRegex(PolicyError, "findings are missing"):

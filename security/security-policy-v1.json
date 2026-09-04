@@ -1,6 +1,6 @@
 {
   "schema": "SecurityPolicy/v1",
-  "revision": "2026-09-04.1",
+  "revision": "2026-09-04.2",
   "producer": "cognitum-one/.github/.github/workflows/security-scan.yml",
   "controls": ["secrets", "dependencies", "workflow_pins"],
   "profiles": {
@@ -41,5 +41,43 @@
     "1270428105": {"name": "cognitum-one/university", "profile": "university-pilot"},
     "1304159334": {"name": "cognitum-one/cognitum-consultants", "profile": "consultants-pilot"}
   },
-  "baselines": []
+  "baselines": [
+    {
+      "id": "website-dependencies-20260904",
+      "repository_id": "1235738436",
+      "control": "dependencies",
+      "owner": "cognitum-one/.github SecurityPolicy/v1 maintainers",
+      "expires_at": "2026-10-04",
+      "evidence": {
+        "repository": "cognitum-one/website",
+        "pull_request": 884,
+        "run_id": "33853258319",
+        "source_sha": "b9d8f6feda139e2bcc0630cebbc34846d3ef8251",
+        "base_sha": "4f55bbd66a4c30a189834e3f72a54fc06fe0c0e2",
+        "workflow_sha": "9de70a7a46794828d5ec5bfa84ae0ee41e4f7120",
+        "lockfile_blobs": {
+          "package-lock.json": "c03fd819551cfb456058c0833807fe89a1f9ad8b",
+          "functions/package-lock.json": "dc10bd277e49e2b8c1a35b2e254c4f5d6bdd7d2b",
+          "apps/news/package-lock.json": "69573f4c5b6e3d6f80ab831381762ed2063ab747",
+          "management-ui/package-lock.json": "c8be21b55d8da9c165d780be920c997f03899943"
+        }
+      },
+      "findings": [
+        "dependencies:0e5ebe3814b948ba8d0adc76e4f79c27747a95e6b4625c3948dd9070dfeb7342",
+        "dependencies:0fbada5ac229d519aabd6a376804e941723d7d223839c821b24dc3f7b28142d0",
+        "dependencies:12e6528d599ae87113f6669bff1595ae136a30519402b01bc0ee95b5bfb1d2fe",
+        "dependencies:3756638cdbcda11a2e19ac666d8223fe9fa951ca391b3b8c3071b00a200e0f31",
+        "dependencies:4337bc569cd7794d56e49fd36039487fb2cce8a6a55dbe6119cdb70d8603c949",
+        "dependencies:5042b3d122afb6113fbf74aed0d97a8e571b49779eda35e833d9d4d8ab5a43fd",
+        "dependencies:6473193f25a9014c53cccd0e9f03f5fdd5285e788c3fedb3b2cc726b040d5426",
+        "dependencies:6bf742fc38a65c94ab91d5623a70cadd109e8265c9b3767ea78a8f6d71425d0e",
+        "dependencies:865a3eec2572254f2a937869c0275761305d714b5e857a14ce8925f66c97c870",
+        "dependencies:abc9fac57c10c4f2589bd35968119ffaf100dff3378896f2ae49b2966c667ce2",
+        "dependencies:c439f74ae6442688ddb0db575ed00dc4e8c8bf7e9a35c5e099612a4dc57cd873",
+        "dependencies:eaa3b1577c56bba6f7603d67b46cabacdf7d99e216e73b00e4560293d528529c",
+        "dependencies:ed25491dd28fcdd05597791786120b60178307fd91aaa3c5d8dfd349d453ea8b",
+        "dependencies:ff18dd2901516352849b2cb81550c595308557d14ce3ed1da58cc61ce98e65f6"
+      ]
+    }
+  ]
 }
