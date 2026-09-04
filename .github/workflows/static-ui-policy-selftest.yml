@@ -55,7 +55,8 @@ jobs:
             security/static_ui_runtime_receipt.py \
             security/static_ui_release_gate.py \
             security/verify_static_ui_workflows.py \
-            security/security_policy.py
+            security/security_policy.py \
+            security/security_findings.py
           python3 security/test_osv_gate.py
           python3 security/test_run_osv_scan.py
           python3 security/test_static_ui_runtime_receipt.py
@@ -64,6 +65,7 @@ jobs:
           python3 security/verify_static_ui_workflows.py
           python3 security/test_enforcement_gate.py
           python3 security/test_security_policy.py
+          python3 security/test_security_findings.py
           python3 security/test_security_release_workflow.py
           node --test security/test_verify_workflow_pins.mjs
           node security/verify_workflow_pins.mjs .

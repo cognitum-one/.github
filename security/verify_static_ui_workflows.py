@@ -357,7 +357,7 @@ def _verify_common(source: str, label: str) -> None:
 def _verify_security_app_bridge(source: str) -> None:
     secret_block_match = re.search(
         r"(?ms)^  workflow_call:\n    secrets:\n"
-        r"(?P<body>.*?)^permissions:\n",
+        r"(?P<body>.*?)(?:^    outputs:\n|^permissions:\n)",
         source,
     )
     if secret_block_match is None:
@@ -377,6 +377,14 @@ def _verify_security_app_bridge(source: str) -> None:
         raise WorkflowPolicyError(
             "security workflow GitHub App secrets must remain optional for other callers"
         )
+    _require(
+        source,
+        (
+            "outputs:\n      evidence:",
+            "value: ${{ jobs.enforcement.outputs.evidence }}",
+        ),
+        "security workflow evidence output",
+    )
 
     starts = [match.start() for match in re.finditer(r"(?m)^      - ", source)]
     steps = [
@@ -925,6 +933,7 @@ def _verify_selftest(source: str) -> None:
             "python3 security/test_verify_static_ui_workflows.py",
             "python3 security/verify_static_ui_workflows.py",
             "python3 security/test_security_policy.py",
+            "python3 security/test_security_findings.py",
             "python3 security/test_security_release_workflow.py",
             "python3 -m json.tool workflow-templates/security.properties.json >/dev/null",
             "python3 -m json.tool security/security-policy-v1.json >/dev/null",

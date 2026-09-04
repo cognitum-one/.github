@@ -145,13 +145,15 @@ def evaluate(
     profile, modes = resolve_profile(policy, repository_id, repository)
     if set(results) != set(policy["controls"]) or any(not isinstance(value, str) for value in results.values()):
         raise PolicyError("missing or skipped security subcheck results")
-    if set(findings) - set(policy["controls"]):
-        raise PolicyError("findings name an unknown control")
+    if set(findings) != set(policy["controls"]):
+        raise PolicyError("findings are missing a security subcheck or name an unknown control")
     baselines = _active_baselines(policy, repository_id, today)
     exceptions: list[dict[str, Any]] = []
     blocking: list[str] = []
     receipt_findings: dict[str, list[str]] = {}
     baseline_matches: dict[str, list[str]] = {}
+    if release_rerun and release_candidate_sha != source_sha:
+        blocking.append("release rerun did not use the exact candidate SHA")
     for control in policy["controls"]:
         mode = modes[control]
         observed = findings.get(control, [])
@@ -197,6 +199,7 @@ def evaluate(
         "findings": receipt_findings,
         "baseline_matches": baseline_matches,
         "exceptions": exceptions,
+        "release_rerun": release_rerun,
         "verdict": "pass" if not blocking else "fail",
         "blocking": blocking,
     }

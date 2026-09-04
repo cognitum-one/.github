@@ -69,6 +69,7 @@ class SecurityPolicyTests(unittest.TestCase):
         receipt = evaluate(**dict(self.good, findings={"secrets": [], "dependencies": ["GHSA-new"], "workflow_pins": []}))
         self.assertEqual(receipt["verdict"], "fail")
         self.assertIn("GHSA-new", receipt["blocking"][0])
+        self.assertEqual(receipt["findings"]["dependencies"], ["GHSA-new"])
 
     def test_expired_owned_baseline_blocks(self) -> None:
         policy = copy.deepcopy(self.policy)
@@ -82,6 +83,17 @@ class SecurityPolicyTests(unittest.TestCase):
         receipt = evaluate(**dict(self.good, policy=policy, findings={"secrets": [], "dependencies": ["GHSA-old"], "workflow_pins": []}))
         self.assertEqual(receipt["verdict"], "pass")
         self.assertEqual(receipt["exceptions"][0]["baselines"]["GHSA-old"][0]["expires_at"], "2026-09-30")
+
+    def test_foreign_baseline_cannot_match_a_pilot_finding(self) -> None:
+        policy = copy.deepcopy(self.policy)
+        policy["baselines"] = [{"id": "foreign", "repository_id": "1235738436", "control": "dependencies", "owner": "security", "expires_at": "2026-09-30", "findings": ["GHSA-old"]}]
+        receipt = evaluate(**dict(self.good, policy=policy, findings={"secrets": [], "dependencies": ["GHSA-old"], "workflow_pins": []}))
+        self.assertEqual(receipt["verdict"], "fail")
+        self.assertEqual(receipt["baseline_matches"]["dependencies"], [])
+
+    def test_missing_finding_evidence_fails_closed(self) -> None:
+        with self.assertRaisesRegex(PolicyError, "findings are missing"):
+            evaluate(**dict(self.good, findings={"secrets": [], "dependencies": []}))
 
     def test_release_requires_exact_independent_candidate_rerun(self) -> None:
         policy = copy.deepcopy(self.policy)
