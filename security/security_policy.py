@@ -95,6 +95,8 @@ def _active_baselines(
     policy: dict[str, Any], repository_id: str, today: dt.date
 ) -> dict[str, dict[str, list[dict[str, Any]]]]:
     active: dict[str, dict[str, list[dict[str, Any]]]] = {}
+    baseline_ids: set[str] = set()
+    baseline_ownership: set[tuple[str, str]] = set()
     for baseline in policy["baselines"]:
         if not isinstance(baseline, dict):
             raise PolicyError("baseline is invalid")
@@ -109,6 +111,22 @@ def _active_baselines(
             or baseline["control"] not in policy["controls"]
         ):
             raise PolicyError("baseline identity is invalid")
+        # A baseline is an indivisible, owner-accountable exception. Letting a
+        # second record reuse its ID or repository/control ownership merge a
+        # disjoint finding set into the ratchet, which turns an explicit finite
+        # exception into an accidental broadening. Validate globally, before
+        # filtering for the caller repository, so a malformed registry is never
+        # selectively accepted.
+        if baseline["id"] in baseline_ids:
+            raise PolicyError(f"baseline ID is duplicated: {baseline['id']}")
+        ownership = (baseline["repository_id"], baseline["control"])
+        if ownership in baseline_ownership:
+            raise PolicyError(
+                "baseline ownership overlaps for repository/control: "
+                f"{baseline['repository_id']}/{baseline['control']}"
+            )
+        baseline_ids.add(baseline["id"])
+        baseline_ownership.add(ownership)
         evidence = baseline["evidence"]
         if (
             not isinstance(evidence, dict)

@@ -48,11 +48,11 @@ class SecurityPolicyTests(unittest.TestCase):
         return dict(self.good, findings=findings, completions=self._completions(findings), **overrides)
 
     def _baseline(
-        self, *, repository_id: str = "1211713708", finding: str = "GHSA-old",
+        self, *, identifier: str = "owned", repository_id: str = "1211713708", finding: str = "GHSA-old",
         expires_at: str = "2026-09-30",
     ) -> dict[str, object]:
         return {
-            "id": "owned",
+            "id": identifier,
             "repository_id": repository_id,
             "control": "dependencies",
             "owner": "security",
@@ -133,6 +133,28 @@ class SecurityPolicyTests(unittest.TestCase):
         receipt = evaluate(**self._with_findings({"secrets": [], "dependencies": ["GHSA-old"], "workflow_pins": []}, policy=policy))
         self.assertEqual(receipt["verdict"], "fail")
         self.assertEqual(receipt["baseline_matches"]["dependencies"], [])
+
+    def test_duplicate_baseline_id_fails_closed_before_it_can_merge_findings(self) -> None:
+        policy = copy.deepcopy(self.policy)
+        first = self._baseline(identifier="duplicate", finding="GHSA-old")
+        second = self._baseline(identifier="duplicate", repository_id="1270428105", finding="GHSA-new")
+        policy["baselines"] = [first, second]
+        with self.assertRaisesRegex(PolicyError, "baseline ID is duplicated"):
+            evaluate(**self._with_findings(
+                {"secrets": [], "dependencies": ["GHSA-old"], "workflow_pins": []}, policy=policy
+            ))
+
+    def test_overlapping_repository_control_baselines_fail_instead_of_unioning_findings(self) -> None:
+        policy = copy.deepcopy(self.policy)
+        first = self._baseline(identifier="first", finding="GHSA-old")
+        second = self._baseline(identifier="second", finding="GHSA-new")
+        policy["baselines"] = [first, second]
+        # Before this guard the two separately owned records unioned and passed
+        # both findings, silently broadening the dependencies ratchet.
+        with self.assertRaisesRegex(PolicyError, "baseline ownership overlaps"):
+            evaluate(**self._with_findings(
+                {"secrets": [], "dependencies": ["GHSA-old", "GHSA-new"], "workflow_pins": []}, policy=policy
+            ))
 
     def test_website_owned_baseline_matches_only_its_exact_finding_set(self) -> None:
         baseline = self.policy["baselines"][0]

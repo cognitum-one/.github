@@ -40,8 +40,8 @@ jobs:
       CANDIDATE_SHA: ${{ inputs.candidate_sha }}
       SECURITY_RESULT: ${{ needs.security.result }}
       SECURITY_EVIDENCE: ${{ needs.security.outputs.evidence }}
-      SECURITY_POLICY_SHA256: "1dac6c37586d784d36b6561fa0531b59853eedc578ec440c97197692a5419c10"
-      SECURITY_POLICY_SCRIPT_SHA256: "ab0f761063cac9a08c0fe238f76413f847d30dea241e75c4a19bd7d3ce869e93"
+      SECURITY_POLICY_SHA256: "d33b87d04f754f932f9c6eb35f34b85acd1299341d90f21dfff80af371003838"
+      SECURITY_POLICY_SCRIPT_SHA256: "b737b6e6a195012d2a37678acf48b4098fad5b5be806a4a69529e81c940c4dfd"
     steps:
       - name: Refuse a stale candidate and evaluate the trusted rerun receipt
         id: release_evidence

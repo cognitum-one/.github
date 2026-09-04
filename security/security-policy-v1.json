@@ -1,6 +1,6 @@
 {
   "schema": "SecurityPolicy/v1",
-  "revision": "2026-09-04.2",
+  "revision": "2026-09-04.3",
   "producer": "cognitum-one/.github/.github/workflows/security-scan.yml",
   "controls": ["secrets", "dependencies", "workflow_pins"],
   "profiles": {
