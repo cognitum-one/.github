@@ -19,13 +19,32 @@ class SecurityPolicyTests(unittest.TestCase):
         self.path = Path(__file__).with_name("security-policy-v1.json")
         self.digest = hashlib.sha256(self.path.read_bytes()).hexdigest()
         self.policy = load_policy(self.path, self.digest)
+        findings = {"secrets": [], "dependencies": [], "workflow_pins": []}
         self.good = dict(
             policy=self.policy, repository_id="1211713708", repository="cognitum-one/cognitum",
             source_sha="a" * 40, workflow_sha="b" * 40,
             producer="cognitum-one/.github/.github/workflows/security-scan.yml",
             results={"secrets": "success", "dependencies": "success", "workflow_pins": "success"},
-            findings={"secrets": [], "dependencies": [], "workflow_pins": []}, today=dt.date(2026, 9, 4),
+            findings=findings,
+            completions=self._completions(findings), today=dt.date(2026, 9, 4),
         )
+
+    def _completions(self, findings: dict[str, list[str]]) -> dict[str, dict[str, object]]:
+        return {
+            control: {
+                "schema": "security-producer-evidence-v1",
+                "producer": f"cognitum-one/.github/.github/workflows/security-scan.yml#{control}",
+                "control": control,
+                "source_sha": "a" * 40,
+                "workflow_sha": "b" * 40,
+                "state": "completed",
+                "findings": sorted(set(values)),
+            }
+            for control, values in findings.items()
+        }
+
+    def _with_findings(self, findings: dict[str, list[str]], **overrides: object) -> dict[str, object]:
+        return dict(self.good, findings=findings, completions=self._completions(findings), **overrides)
 
     def test_registered_id_selects_mixed_centrally_owned_profile(self) -> None:
         receipt = evaluate(**self.good)
@@ -66,7 +85,7 @@ class SecurityPolicyTests(unittest.TestCase):
             evaluate(**dict(self.good, results={"secrets": "success"}))
 
     def test_ratchet_blocks_a_new_dependency_finding(self) -> None:
-        receipt = evaluate(**dict(self.good, findings={"secrets": [], "dependencies": ["GHSA-new"], "workflow_pins": []}))
+        receipt = evaluate(**self._with_findings({"secrets": [], "dependencies": ["GHSA-new"], "workflow_pins": []}))
         self.assertEqual(receipt["verdict"], "fail")
         self.assertIn("GHSA-new", receipt["blocking"][0])
         self.assertEqual(receipt["findings"]["dependencies"], ["GHSA-new"])
@@ -75,25 +94,58 @@ class SecurityPolicyTests(unittest.TestCase):
         policy = copy.deepcopy(self.policy)
         policy["baselines"] = [{"id": "old", "repository_id": "1211713708", "control": "dependencies", "owner": "security", "expires_at": "2026-09-04", "findings": ["GHSA-old"]}]
         with self.assertRaisesRegex(PolicyError, "expired"):
-            evaluate(**dict(self.good, policy=policy, findings={"secrets": [], "dependencies": ["GHSA-old"], "workflow_pins": []}))
+            evaluate(**self._with_findings({"secrets": [], "dependencies": ["GHSA-old"], "workflow_pins": []}, policy=policy))
 
     def test_owned_baseline_receipt_records_its_expiry(self) -> None:
         policy = copy.deepcopy(self.policy)
         policy["baselines"] = [{"id": "owned", "repository_id": "1211713708", "control": "dependencies", "owner": "security", "expires_at": "2026-09-30", "findings": ["GHSA-old"]}]
-        receipt = evaluate(**dict(self.good, policy=policy, findings={"secrets": [], "dependencies": ["GHSA-old"], "workflow_pins": []}))
+        receipt = evaluate(**self._with_findings({"secrets": [], "dependencies": ["GHSA-old"], "workflow_pins": []}, policy=policy))
         self.assertEqual(receipt["verdict"], "pass")
         self.assertEqual(receipt["exceptions"][0]["baselines"]["GHSA-old"][0]["expires_at"], "2026-09-30")
 
     def test_foreign_baseline_cannot_match_a_pilot_finding(self) -> None:
         policy = copy.deepcopy(self.policy)
         policy["baselines"] = [{"id": "foreign", "repository_id": "1235738436", "control": "dependencies", "owner": "security", "expires_at": "2026-09-30", "findings": ["GHSA-old"]}]
-        receipt = evaluate(**dict(self.good, policy=policy, findings={"secrets": [], "dependencies": ["GHSA-old"], "workflow_pins": []}))
+        receipt = evaluate(**self._with_findings({"secrets": [], "dependencies": ["GHSA-old"], "workflow_pins": []}, policy=policy))
         self.assertEqual(receipt["verdict"], "fail")
         self.assertEqual(receipt["baseline_matches"]["dependencies"], [])
 
     def test_missing_finding_evidence_fails_closed(self) -> None:
         with self.assertRaisesRegex(PolicyError, "findings are missing"):
-            evaluate(**dict(self.good, findings={"secrets": [], "dependencies": []}))
+            evaluate(**dict(self.good, findings={"secrets": [], "dependencies": []}, completions={}))
+
+    def test_observe_reports_completed_findings_without_blocking(self) -> None:
+        findings = {"secrets": ["secrets:observed"], "dependencies": [], "workflow_pins": []}
+        policy = copy.deepcopy(self.policy)
+        policy["repositories"]["1270428105"]["profile"] = "university-pilot"
+        receipt = evaluate(**self._with_findings(findings, policy=policy, repository_id="1270428105", repository="cognitum-one/university"))
+        self.assertEqual(receipt["verdict"], "pass")
+        self.assertEqual(receipt["findings"]["secrets"], ["secrets:observed"])
+
+    def test_observe_cannot_swallow_failure_or_partial_evidence(self) -> None:
+        findings = {"secrets": ["secrets:observed"], "dependencies": [], "workflow_pins": []}
+        policy = copy.deepcopy(self.policy)
+        data = self._with_findings(findings, policy=policy, repository_id="1270428105", repository="cognitum-one/university")
+        self.assertEqual(evaluate(**dict(data, results={**data["results"], "secrets": "failure"}))["verdict"], "fail")
+        partial = copy.deepcopy(data["completions"])
+        partial["secrets"]["state"] = "partial"
+        with self.assertRaisesRegex(PolicyError, "completion evidence"):
+            evaluate(**dict(data, completions=partial))
+
+    def test_enforce_blocks_a_completed_finding(self) -> None:
+        findings = {"secrets": ["secrets:known"], "dependencies": [], "workflow_pins": []}
+        receipt = evaluate(**self._with_findings(findings, repository_id="9999999999", repository="example/unregistered"))
+        self.assertEqual(receipt["verdict"], "fail")
+
+    def test_missing_or_wrong_producer_completion_blocks(self) -> None:
+        partial = copy.deepcopy(self.good["completions"])
+        del partial["secrets"]
+        with self.assertRaisesRegex(PolicyError, "completion evidence"):
+            evaluate(**dict(self.good, completions=partial))
+        wrong = copy.deepcopy(self.good["completions"])
+        wrong["secrets"]["producer"] = "attacker"
+        with self.assertRaisesRegex(PolicyError, "wrong-producer"):
+            evaluate(**dict(self.good, completions=wrong))
 
     def test_release_requires_exact_independent_candidate_rerun(self) -> None:
         policy = copy.deepcopy(self.policy)

@@ -134,6 +134,7 @@ def evaluate(
     producer: str,
     results: dict[str, str],
     findings: dict[str, list[str]],
+    completions: dict[str, dict[str, Any]],
     today: dt.date,
     release_rerun: bool = False,
     release_candidate_sha: str | None = None,
@@ -147,6 +148,8 @@ def evaluate(
         raise PolicyError("missing or skipped security subcheck results")
     if set(findings) != set(policy["controls"]):
         raise PolicyError("findings are missing a security subcheck or name an unknown control")
+    if set(completions) != set(policy["controls"]):
+        raise PolicyError("completion evidence is missing a security subcheck or name an unknown control")
     baselines = _active_baselines(policy, repository_id, today)
     exceptions: list[dict[str, Any]] = []
     blocking: list[str] = []
@@ -159,14 +162,25 @@ def evaluate(
         observed = findings.get(control, [])
         if not isinstance(observed, list) or not all(isinstance(item, str) and item for item in observed):
             raise PolicyError(f"findings for {control} are invalid")
+        completion = completions[control]
+        if not isinstance(completion, dict) or completion != {
+            "schema": "security-producer-evidence-v1",
+            "producer": f"{policy['producer']}#{control}",
+            "control": control,
+            "source_sha": source_sha,
+            "workflow_sha": workflow_sha,
+            "state": "completed",
+            "findings": sorted(set(observed)),
+        }:
+            raise PolicyError(f"completion evidence for {control} is missing, malformed, or wrong-producer")
         receipt_findings[control] = sorted(set(observed))
         baseline_findings = baselines.get(control, {})
         matched = sorted(set(observed) & set(baseline_findings))
         baseline_matches[control] = matched
-        if mode == "observe":
-            continue
         if results[control] != SUCCESS:
             blocking.append(f"{control}={results[control]}")
+            continue
+        if mode == "observe":
             continue
         if mode == "ratchet":
             new = sorted(set(observed) - set(baseline_findings))
@@ -182,7 +196,12 @@ def evaluate(
                         },
                     }
                 )
+        elif mode == "enforce":
+            if observed:
+                blocking.append(f"{control} has finding(s): {', '.join(sorted(set(observed)))}")
         elif mode == "release":
+            if observed:
+                blocking.append(f"{control} release evidence has finding(s): {', '.join(sorted(set(observed)))}")
             if not release_rerun or release_candidate_sha != source_sha:
                 blocking.append(f"{control} release mode did not independently rerun exact candidate")
     return {
@@ -197,6 +216,7 @@ def evaluate(
         "controls": modes,
         "results": results,
         "findings": receipt_findings,
+        "completions": completions,
         "baseline_matches": baseline_matches,
         "exceptions": exceptions,
         "release_rerun": release_rerun,
@@ -216,6 +236,7 @@ def main() -> None:
     parser.add_argument("--producer", required=True)
     parser.add_argument("--results", required=True)
     parser.add_argument("--findings", required=True)
+    parser.add_argument("--completions", required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--release-rerun", action="store_true")
     parser.add_argument("--release-candidate-sha")
@@ -223,12 +244,13 @@ def main() -> None:
     policy = load_policy(args.policy, args.policy_sha256)
     results = _strict_json(args.results)
     findings = _strict_json(args.findings)
-    if not isinstance(results, dict) or not isinstance(findings, dict):
-        raise PolicyError("results and findings must be JSON objects")
+    completions = _strict_json(args.completions)
+    if not isinstance(results, dict) or not isinstance(findings, dict) or not isinstance(completions, dict):
+        raise PolicyError("results, findings, and completions must be JSON objects")
     receipt = evaluate(
         policy=policy, repository_id=args.repository_id, repository=args.repository,
         source_sha=args.source_sha, workflow_sha=args.workflow_sha, producer=args.producer,
-        results=results, findings=findings, today=dt.date.today(),
+        results=results, findings=findings, completions=completions, today=dt.date.today(),
         release_rerun=args.release_rerun, release_candidate_sha=args.release_candidate_sha,
     )
     args.output.write_text(json.dumps(receipt, sort_keys=True, indent=2) + "\n", encoding="utf-8")
