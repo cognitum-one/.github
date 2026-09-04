@@ -24,10 +24,17 @@ class SecurityReleaseWorkflowTests(unittest.TestCase):
         self.assertIn('test "$SECURITY_RESULT" = success', self.source)
         self.assertIn('[[ "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]]', self.source)
         self.assertIn('test "$CANDIDATE_SHA" = "$GITHUB_SHA"', self.source)
+        self.assertIn("needs.security.outputs.evidence", self.source)
+        self.assertIn("--release-rerun", self.source)
+        self.assertIn('"verdict": "pass"', self.source)
 
     def test_callers_cannot_supply_a_mode_or_inherit_secrets(self) -> None:
         self.assertNotIn("mode:", self.source)
         self.assertNotIn("secrets: inherit", self.source)
+        self.assertNotIn("release_rerun:", self.source)
+        scan = (Path(__file__).parents[1] / ".github/workflows/security-scan.yml").read_text(encoding="utf-8")
+        self.assertNotIn("release_rerun:", scan)
+        self.assertNotIn("--release-rerun", scan)
 
 
 if __name__ == "__main__":
