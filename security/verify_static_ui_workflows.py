@@ -934,6 +934,7 @@ def _verify_selftest(source: str) -> None:
             "python3 security/verify_static_ui_workflows.py",
             "python3 security/test_security_policy.py",
             "python3 security/test_security_findings.py",
+            "python3 security/test_security_scan_osv_status.py",
             "python3 security/test_security_release_workflow.py",
             "python3 -m json.tool workflow-templates/security.properties.json >/dev/null",
             "python3 -m json.tool security/security-policy-v1.json >/dev/null",

@@ -716,7 +716,8 @@ jobs:
           # Gate: fail on High/Critical (CVSS>=7) fixable vulns that can SHIP.
           # The exact, expiring React Router 7.18.2 OSV range correction is
           # independently pinned organization policy; every other finding blocks.
-          if ! OSV_REPORT="$OSV_REPORT" \
+          set +e
+          OSV_REPORT="$OSV_REPORT" \
           OSV_REPOSITORY_ROOT="$GITHUB_WORKSPACE" \
           OSV_RUNTIME_RECEIPT="${{ steps.runtime.outputs.receipt }}" \
           OSV_RUNTIME_INVENTORY="${{ steps.runtime.outputs.inventory }}" \
@@ -730,10 +731,18 @@ jobs:
           GITHUB_JOB="$GITHUB_JOB" \
           GITHUB_WORKFLOW_REF="$GITHUB_WORKFLOW_REF" \
           GITHUB_WORKFLOW_SHA="$GITHUB_WORKFLOW_SHA" \
-            python3 "$POLICY_DIR/osv_gate.py"; then
-            # A finding verdict belongs to SecurityPolicy/v1; malformed or absent
-            # reports already fail the normalizer before this point.
+            python3 "$POLICY_DIR/osv_gate.py"
+          gate_status=$?
+          set -e
+          if [ "$gate_status" -eq 1 ]; then
+            # Exit 1 is the gate's documented finding verdict. The central
+            # policy owns whether this completed finding blocks a profile.
             test "${{ steps.findings.outputs.json }}" != '[]'
+          elif [ "$gate_status" -ne 0 ]; then
+            # Exit 2 is malformed report/runtime receipt/nonce/image evidence
+            # or another execution-integrity fault: never reinterpret it as a
+            # finding merely because the report happens to be nonempty.
+            exit "$gate_status"
           fi
 
   enforcement:

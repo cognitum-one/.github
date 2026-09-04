@@ -66,6 +66,7 @@ jobs:
           python3 security/test_enforcement_gate.py
           python3 security/test_security_policy.py
           python3 security/test_security_findings.py
+          python3 security/test_security_scan_osv_status.py
           python3 security/test_security_release_workflow.py
           node --test security/test_verify_workflow_pins.mjs
           node security/verify_workflow_pins.mjs .
