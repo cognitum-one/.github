@@ -86,6 +86,18 @@ The policy
 loader verifies the registry bytes against a SHA-256 embedded in the immutable
 workflow before it evaluates any result.
 
+The Website dependency ratchet has one deliberately narrow exception while
+Website #884 is adopted: baseline `website-dependencies-20260904` is owned by
+the central SecurityPolicy/v1 maintainers, expires on 2026-10-04, and is bound
+to the 14 normalized dependency IDs from Website PR #884 run 33853258319 at
+`b9d8f6feda139e2bcc0630cebbc34846d3ef8251`. Its provenance records the
+unchanged root, Functions, News, and Management UI lockfile blob IDs. It
+applies only to the Website `dependencies` ratchet; secrets and workflow pins
+remain `enforce`, and any dependency ID not in that exact set fails. The four
+blob IDs are an auditable source snapshot rather than a caller input: changing
+a lockfile cannot extend the exception, because each new advisory, source path,
+or package version normalizes to a distinct finding ID and fails the ratchet.
+
 Every evaluated run uploads `security-evidence-v1.json` as the
 `security-evidence-v1` artifact. It records the policy revision, immutable
 repository ID, source and workflow SHA, producer, per-control results and
