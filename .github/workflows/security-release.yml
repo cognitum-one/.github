@@ -26,7 +26,7 @@ jobs:
       contents: read
     # The evidence-producing scan commit is immutable. The wrapper is a later
     # commit so the release rerun signal cannot be a caller-provided input.
-    uses: cognitum-one/.github/.github/workflows/security-scan.yml@b303fbc0e8b6d32c400799e1a354eb007f40dcdf
+    uses: cognitum-one/.github/.github/workflows/security-scan.yml@1b1324eeacf95934237269d7103da8269a943c69
     secrets:
       static_ui_bridge_app_id: ${{ secrets.static_ui_bridge_app_id }}
       static_ui_bridge_app_private_key: ${{ secrets.static_ui_bridge_app_private_key }}
@@ -41,7 +41,7 @@ jobs:
       SECURITY_RESULT: ${{ needs.security.result }}
       SECURITY_EVIDENCE: ${{ needs.security.outputs.evidence }}
       SECURITY_POLICY_SHA256: "e2c02b0d5071ed531824b472f9c8497337f78ed080f79ab5429821701b13607f"
-      SECURITY_POLICY_SCRIPT_SHA256: "e664c5005e3d4c040625ebea4c1b18d2f970892b6661b5d30ae74649a7c21afc"
+      SECURITY_POLICY_SCRIPT_SHA256: "a5793c30733e0115e24143b35835a03e2faa181b85a0f9846f08a86a8b9ce69a"
     steps:
       - name: Refuse a stale candidate and evaluate the trusted rerun receipt
         id: release_evidence
@@ -70,12 +70,14 @@ jobs:
           if any(receipt.get(key) != value for key, value in required.items()):
               raise SystemExit("trusted security rerun receipt identity is invalid")
           controls = {"secrets", "dependencies", "workflow_pins"}
-          if set(receipt.get("results", {})) != controls or set(receipt.get("findings", {})) != controls:
+          if (set(receipt.get("results", {})) != controls or set(receipt.get("findings", {})) != controls
+              or set(receipt.get("completions", {})) != controls):
               raise SystemExit("trusted security rerun receipt is incomplete")
           (directory / "results.json").write_text(json.dumps(receipt["results"]), encoding="utf-8")
           (directory / "findings.json").write_text(json.dumps(receipt["findings"]), encoding="utf-8")
+          (directory / "completions.json").write_text(json.dumps(receipt["completions"]), encoding="utf-8")
           PY
-          POLICY_COMMIT="b303fbc0e8b6d32c400799e1a354eb007f40dcdf"
+          POLICY_COMMIT="1b1324eeacf95934237269d7103da8269a943c69"
           curl --proto '=https' --tlsv1.2 -fsSLo "$EVIDENCE_DIR/security-policy-v1.json" \
             "https://raw.githubusercontent.com/cognitum-one/.github/${POLICY_COMMIT}/security/security-policy-v1.json"
           curl --proto '=https' --tlsv1.2 -fsSLo "$EVIDENCE_DIR/security_policy.py" \
@@ -92,6 +94,7 @@ jobs:
             --producer cognitum-one/.github/.github/workflows/security-scan.yml \
             --results "$(cat "$EVIDENCE_DIR/results.json")" \
             --findings "$(cat "$EVIDENCE_DIR/findings.json")" \
+            --completions "$(cat "$EVIDENCE_DIR/completions.json")" \
             --release-rerun \
             --release-candidate-sha "$CANDIDATE_SHA" \
             --output "$EVIDENCE_DIR/security-evidence-v1.json"
