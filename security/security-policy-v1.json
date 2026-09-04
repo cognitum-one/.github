@@ -1,0 +1,45 @@
+{
+  "schema": "SecurityPolicy/v1",
+  "revision": "2026-09-04.1",
+  "producer": "cognitum-one/.github/.github/workflows/security-scan.yml",
+  "controls": ["secrets", "dependencies", "workflow_pins"],
+  "profiles": {
+    "strict": {
+      "secrets": "enforce",
+      "dependencies": "enforce",
+      "workflow_pins": "enforce"
+    },
+    "cognitum-pilot": {
+      "secrets": "enforce",
+      "dependencies": "ratchet",
+      "workflow_pins": "enforce"
+    },
+    "website-pilot": {
+      "secrets": "enforce",
+      "dependencies": "ratchet",
+      "workflow_pins": "enforce"
+    },
+    "release-candidate": {
+      "secrets": "release",
+      "dependencies": "release",
+      "workflow_pins": "release"
+    },
+    "university-pilot": {
+      "secrets": "observe",
+      "dependencies": "ratchet",
+      "workflow_pins": "enforce"
+    },
+    "consultants-pilot": {
+      "secrets": "enforce",
+      "dependencies": "ratchet",
+      "workflow_pins": "observe"
+    }
+  },
+  "repositories": {
+    "1211713708": {"name": "cognitum-one/cognitum", "profile": "cognitum-pilot"},
+    "1235738436": {"name": "cognitum-one/website", "profile": "website-pilot"},
+    "1270428105": {"name": "cognitum-one/university", "profile": "university-pilot"},
+    "1304159334": {"name": "cognitum-one/cognitum-consultants", "profile": "consultants-pilot"}
+  },
+  "baselines": []
+}
