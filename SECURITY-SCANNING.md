@@ -79,7 +79,10 @@ profile.
 Profiles may mix `observe`, `ratchet`, `enforce`, and `release`. A ratchet
 accepts only findings in an organization-owned, explicitly owned, finite
 baseline; new findings and an expired baseline fail closed. Release controls
-require an independent re-run bound to the exact candidate SHA. The policy
+require an independent re-run bound to the exact candidate SHA. Release
+workflows call the organization `security-release.yml` wrapper, which invokes
+the full-SHA-pinned scanner again and refuses a stale candidate or failed rerun.
+The policy
 loader verifies the registry bytes against a SHA-256 embedded in the immutable
 workflow before it evaluates any result.
 

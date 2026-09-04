@@ -1,0 +1,48 @@
+name: security-release
+
+# Central release boundary: this workflow deliberately calls the immutable
+# SecurityPolicy/v1 scanner again for the caller's exact candidate. It does not
+# trust an earlier PR result or permit a caller-selected policy mode.
+on:
+  workflow_call:
+    inputs:
+      candidate_sha:
+        description: Exact commit that a release workflow intends to consume.
+        required: true
+        type: string
+    secrets:
+      static_ui_bridge_app_id:
+        required: false
+      static_ui_bridge_app_private_key:
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  security:
+    name: security
+    permissions:
+      contents: read
+    # This is the first commit that introduced SecurityPolicy/v1. A second,
+    # separately reviewed wrapper commit avoids self-referential mutable refs.
+    uses: cognitum-one/.github/.github/workflows/security-scan.yml@d2b7a5e9137c8a0e19a3fab7105ac314643b699c
+    secrets:
+      static_ui_bridge_app_id: ${{ secrets.static_ui_bridge_app_id }}
+      static_ui_bridge_app_private_key: ${{ secrets.static_ui_bridge_app_private_key }}
+
+  release:
+    name: release exact-candidate security proof
+    if: ${{ always() }}
+    needs: [security]
+    runs-on: ${{ github.event.repository.visibility == 'public' && 'ubuntu-latest' || fromJSON('["self-hosted","gcp-bypass"]') }}
+    env:
+      CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+      SECURITY_RESULT: ${{ needs.security.result }}
+    steps:
+      - name: Refuse a stale candidate or incomplete independent security rerun
+        run: |
+          set -euo pipefail
+          test "$SECURITY_RESULT" = success
+          [[ "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$CANDIDATE_SHA" = "$GITHUB_SHA"
