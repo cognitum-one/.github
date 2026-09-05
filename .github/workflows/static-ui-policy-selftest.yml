@@ -88,7 +88,13 @@ jobs:
           tar -xzf "$ARCHIVE" -C "$TOOL_DIR" actionlint
           chmod 0500 "$TOOL_DIR/actionlint"
           "$TOOL_DIR/actionlint" -version
-          "$TOOL_DIR/actionlint" -shellcheck shellcheck \
+          # actionlint 1.7.12 -- the latest, and what this job pins -- does
+            # not carry `job.workflow_sha` in its job-context schema, though
+            # GitHub documents it and security-scan.yml needs it for scanner
+            # provenance. Scoped to that one property on that one context, so
+            # it cannot hide any other undefined-property error.
+            "$TOOL_DIR/actionlint" -shellcheck shellcheck \
+              -ignore 'property "workflow_sha" is not defined in object type \{check_run_id' \
             .github/workflows/security-scan.yml \
             .github/workflows/security-release.yml \
             .github/workflows/static-ui-release.yml \
