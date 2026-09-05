@@ -860,9 +860,17 @@ jobs:
             "https://raw.githubusercontent.com/cognitum-one/.github/${POLICY_COMMIT}/security/security_policy.py"
           curl --proto '=https' --tlsv1.2 -fsSLo "$POLICY_DIR/test_security_policy.py" \
             "https://raw.githubusercontent.com/cognitum-one/.github/${POLICY_COMMIT}/security/test_security_policy.py"
+          # test_security_policy.py does `from security_findings import normalize`,
+          # so the module has to sit beside it. Without this the self-test dies
+          # with ModuleNotFoundError before it asserts anything. Hash-pinned like
+          # the other three; SECURITY_FINDINGS_SHA256 was already declared at the
+          # workflow level and used by the three scanner jobs.
+          curl --proto '=https' --tlsv1.2 -fsSLo "$POLICY_DIR/security_findings.py" \
+            "https://raw.githubusercontent.com/cognitum-one/.github/${POLICY_COMMIT}/security/security_findings.py"
           echo "${SECURITY_POLICY_SHA256}  ${POLICY_DIR}/security-policy-v1.json" | sha256sum -c -
           echo "${SECURITY_POLICY_SCRIPT_SHA256}  ${POLICY_DIR}/security_policy.py" | sha256sum -c -
           echo "${SECURITY_POLICY_TEST_SHA256}  ${POLICY_DIR}/test_security_policy.py" | sha256sum -c -
+          echo "${SECURITY_FINDINGS_SHA256}  ${POLICY_DIR}/security_findings.py" | sha256sum -c -
           python3 "$POLICY_DIR/test_security_policy.py"
           expected_history=skipped
           if [ "$GITHUB_EVENT_NAME" = schedule ] || [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
