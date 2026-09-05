@@ -157,11 +157,25 @@ jobs:
           "$GITLEAKS_BIN" detect --source . --no-git \
             --config "$ORG_CONFIG" --redact --report-format json \
             --report-path "$REPORT" --exit-code 0
-          case "$GITHUB_WORKFLOW_REF" in
-            cognitum-one/.github/.github/workflows/security-scan.yml@[0-9a-f][0-9a-f]*) POLICY_COMMIT="${GITHUB_WORKFLOW_REF##*@}" ;;
-            *) echo "::error::SecurityPolicy/v1 scanner provenance is not immutable."; exit 1 ;;
-          esac
-          [[ "$POLICY_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          # Provenance: the immutable SHA of THIS reusable workflow.
+          #
+          # This read $GITHUB_WORKFLOW_REF, which in a CALLED reusable workflow
+          # holds the CALLER's workflow ref (owner/repo/.github/workflows/
+          # x.yml@refs/heads/...), never this file's own. The pattern could
+          # therefore only match when this workflow ran inside .github itself,
+          # so every external caller failed however it pinned us. Proven by
+          # pinning a caller to a full SHA and watching it fail identically.
+          #
+          # GITHUB_JOB_WORKFLOW_SHA is already a bare SHA, so the `##*@` strip
+          # goes with it. The 40-hex assertion below remains the real gate and
+          # this still fails CLOSED: if the variable is ever empty, the scan
+          # refuses rather than trusting an unpinned policy source.
+          POLICY_COMMIT="${GITHUB_JOB_WORKFLOW_SHA:-}"
+          if [[ ! "$POLICY_COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::SecurityPolicy/v1 scanner provenance is not immutable."
+            echo "::error::provenance source was '${GITHUB_JOB_WORKFLOW_SHA:-<empty>}'; caller ref was '${GITHUB_WORKFLOW_REF:-<empty>}'"
+            exit 1
+          fi
           FINDINGS_TOOL="$RUNNER_TEMP/security_findings.py"
           curl --proto '=https' --tlsv1.2 -fsSLo "$FINDINGS_TOOL" \
             "https://raw.githubusercontent.com/cognitum-one/.github/${POLICY_COMMIT}/security/security_findings.py"
@@ -287,11 +301,25 @@ jobs:
         run: |
           set -euo pipefail
           FINDINGS_VERIFIER="$RUNNER_TEMP/verify_workflow_pins.mjs"
-          case "$GITHUB_WORKFLOW_REF" in
-            cognitum-one/.github/.github/workflows/security-scan.yml@[0-9a-f][0-9a-f]*) POLICY_COMMIT="${GITHUB_WORKFLOW_REF##*@}" ;;
-            *) echo "::error::SecurityPolicy/v1 scanner provenance is not immutable."; exit 1 ;;
-          esac
-          [[ "$POLICY_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          # Provenance: the immutable SHA of THIS reusable workflow.
+          #
+          # This read $GITHUB_WORKFLOW_REF, which in a CALLED reusable workflow
+          # holds the CALLER's workflow ref (owner/repo/.github/workflows/
+          # x.yml@refs/heads/...), never this file's own. The pattern could
+          # therefore only match when this workflow ran inside .github itself,
+          # so every external caller failed however it pinned us. Proven by
+          # pinning a caller to a full SHA and watching it fail identically.
+          #
+          # GITHUB_JOB_WORKFLOW_SHA is already a bare SHA, so the `##*@` strip
+          # goes with it. The 40-hex assertion below remains the real gate and
+          # this still fails CLOSED: if the variable is ever empty, the scan
+          # refuses rather than trusting an unpinned policy source.
+          POLICY_COMMIT="${GITHUB_JOB_WORKFLOW_SHA:-}"
+          if [[ ! "$POLICY_COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::SecurityPolicy/v1 scanner provenance is not immutable."
+            echo "::error::provenance source was '${GITHUB_JOB_WORKFLOW_SHA:-<empty>}'; caller ref was '${GITHUB_WORKFLOW_REF:-<empty>}'"
+            exit 1
+          fi
           FINDINGS_TOOL="$RUNNER_TEMP/security_findings.py"
           curl --proto '=https' --tlsv1.2 -fsSLo "$FINDINGS_VERIFIER" \
             "https://raw.githubusercontent.com/cognitum-one/.github/${POLICY_COMMIT}/security/verify_workflow_pins.mjs"
@@ -683,11 +711,25 @@ jobs:
         id: findings
         run: |
           set -euo pipefail
-          case "$GITHUB_WORKFLOW_REF" in
-            cognitum-one/.github/.github/workflows/security-scan.yml@[0-9a-f][0-9a-f]*) POLICY_COMMIT="${GITHUB_WORKFLOW_REF##*@}" ;;
-            *) echo "::error::SecurityPolicy/v1 scanner provenance is not immutable."; exit 1 ;;
-          esac
-          [[ "$POLICY_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          # Provenance: the immutable SHA of THIS reusable workflow.
+          #
+          # This read $GITHUB_WORKFLOW_REF, which in a CALLED reusable workflow
+          # holds the CALLER's workflow ref (owner/repo/.github/workflows/
+          # x.yml@refs/heads/...), never this file's own. The pattern could
+          # therefore only match when this workflow ran inside .github itself,
+          # so every external caller failed however it pinned us. Proven by
+          # pinning a caller to a full SHA and watching it fail identically.
+          #
+          # GITHUB_JOB_WORKFLOW_SHA is already a bare SHA, so the `##*@` strip
+          # goes with it. The 40-hex assertion below remains the real gate and
+          # this still fails CLOSED: if the variable is ever empty, the scan
+          # refuses rather than trusting an unpinned policy source.
+          POLICY_COMMIT="${GITHUB_JOB_WORKFLOW_SHA:-}"
+          if [[ ! "$POLICY_COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::SecurityPolicy/v1 scanner provenance is not immutable."
+            echo "::error::provenance source was '${GITHUB_JOB_WORKFLOW_SHA:-<empty>}'; caller ref was '${GITHUB_WORKFLOW_REF:-<empty>}'"
+            exit 1
+          fi
           FINDINGS_TOOL="$RUNNER_TEMP/security_findings.py"
           curl --proto '=https' --tlsv1.2 -fsSLo "$FINDINGS_TOOL" \
             "https://raw.githubusercontent.com/cognitum-one/.github/${POLICY_COMMIT}/security/security_findings.py"
@@ -768,16 +810,25 @@ jobs:
           DEPENDENCIES_COMPLETION: ${{ needs.deps.outputs.completion }}
         run: |
           set -euo pipefail
-          case "$GITHUB_WORKFLOW_REF" in
-            cognitum-one/.github/.github/workflows/security-scan.yml@[0-9a-f][0-9a-f]*)
-              POLICY_COMMIT="${GITHUB_WORKFLOW_REF##*@}"
-              ;;
-            *)
-              echo "::error::SecurityPolicy/v1 requires this reusable workflow to be full-SHA pinned."
-              exit 1
-              ;;
-          esac
-          [[ "$POLICY_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          # Provenance: the immutable SHA of THIS reusable workflow.
+          #
+          # This read $GITHUB_WORKFLOW_REF, which in a CALLED reusable workflow
+          # holds the CALLER's workflow ref (owner/repo/.github/workflows/
+          # x.yml@refs/heads/...), never this file's own. The pattern could
+          # therefore only match when this workflow ran inside .github itself,
+          # so every external caller failed however it pinned us. Proven by
+          # pinning a caller to a full SHA and watching it fail identically.
+          #
+          # GITHUB_JOB_WORKFLOW_SHA is already a bare SHA, so the `##*@` strip
+          # goes with it. The 40-hex assertion below remains the real gate and
+          # this still fails CLOSED: if the variable is ever empty, the scan
+          # refuses rather than trusting an unpinned policy source.
+          POLICY_COMMIT="${GITHUB_JOB_WORKFLOW_SHA:-}"
+          if [[ ! "$POLICY_COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::SecurityPolicy/v1 requires this reusable workflow to be full-SHA pinned."
+            echo "::error::provenance source was '${GITHUB_JOB_WORKFLOW_SHA:-<empty>}'; caller ref was '${GITHUB_WORKFLOW_REF:-<empty>}'"
+            exit 1
+          fi
           POLICY_DIR="$RUNNER_TEMP/security-policy-v1"
           install -d -m 0700 "$POLICY_DIR"
           curl --proto '=https' --tlsv1.2 -fsSLo "$POLICY_DIR/security-policy-v1.json" \
