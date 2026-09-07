@@ -91,6 +91,15 @@ def verify(contract: dict, template: str, documentation: str, workflows: dict[st
         if phrase not in documentation:
             fail(f"architecture documentation lacks: {phrase}")
 
+    combined_guidance = "\n".join([documentation, *workflows.values()])
+    for phrase in (
+        "Release workflows call the organization `security-release.yml` wrapper",
+        "caller must make its deploy/promotion job depend on trusted-static-ui-release",
+        "caller must make any later staging deploy/promotion job depend on the successful reusable job",
+    ):
+        if phrase in combined_guidance:
+            fail(f"prohibited central hot-path guidance remains: {phrase}")
+
     required_markers = {
         "security-scan.yml": "Reference and scheduled fleet-audit scanner",
         "security-release.yml": "Legacy reference implementation only",

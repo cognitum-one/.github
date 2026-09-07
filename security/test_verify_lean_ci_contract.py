@@ -81,6 +81,21 @@ class LeanContractTests(unittest.TestCase):
         with self.assertRaisesRegex(LeanContractError, "scanner events do not match"):
             verify(self.contract, self.template, self.documentation, workflows)
 
+    def test_central_release_instruction_is_rejected(self) -> None:
+        documentation = self.documentation + (
+            "\nRelease workflows call the organization `security-release.yml` wrapper.\n"
+        )
+        with self.assertRaisesRegex(LeanContractError, "prohibited central hot-path guidance"):
+            verify(self.contract, self.template, documentation, self.workflows)
+
+    def test_central_static_ui_dependency_instruction_is_rejected(self) -> None:
+        workflows = dict(self.workflows)
+        workflows["static-ui-revision.yml"] += (
+            "\n# caller must make its deploy/promotion job depend on trusted-static-ui-release\n"
+        )
+        with self.assertRaisesRegex(LeanContractError, "prohibited central hot-path guidance"):
+            verify(self.contract, self.template, self.documentation, workflows)
+
     def test_reference_marker_removal_is_rejected(self) -> None:
         workflows = dict(self.workflows)
         workflows["security-release.yml"] = workflows["security-release.yml"].replace(
