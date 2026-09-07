@@ -22,10 +22,16 @@
     "scheduled-fleet-audit",
     "drift-reporting"
   ],
-  "central_audit_workflow": {
-    "path": ".github/workflows/security-scan.yml",
-    "pin": "74a6a55a314a8701386942f04170ae4cc9807741",
-    "events": ["schedule", "workflow_dispatch"]
+  "central_audit": {
+    "caller_template": {
+      "path": "workflow-templates/security.yml",
+      "events": ["schedule", "workflow_dispatch"]
+    },
+    "reusable_scanner": {
+      "path": ".github/workflows/security-scan.yml",
+      "events": ["workflow_call"],
+      "pin": "74a6a55a314a8701386942f04170ae4cc9807741"
+    }
   },
   "human_only": [
     "production-merge",

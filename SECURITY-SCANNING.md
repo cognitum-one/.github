@@ -93,12 +93,14 @@ as an input. The four current pilot IDs are Cognitum, Website, University, and
 Consultants; an unregistered repository uses the existing all-`enforce` strict
 profile.
 
-Profiles may mix `observe`, `ratchet`, `enforce`, and `release`. A ratchet
-accepts only findings in an organization-owned, explicitly owned, finite
-baseline; new findings and an expired baseline fail closed. Release controls
-require an independent re-run bound to the exact candidate SHA. Release
-workflows call the organization `security-release.yml` wrapper, which invokes
-the full-SHA-pinned scanner again and refuses a stale candidate or failed rerun.
+Reference profiles may mix `observe`, `ratchet`, `enforce`, and `release`. A
+ratchet accepts only findings in an organization-owned, explicitly owned,
+finite baseline; new findings and an expired baseline fail closed. Release
+controls require an independent re-run bound to the exact candidate SHA.
+Current product release workflows implement that rerun locally and must not
+call the central `security-release.yml` wrapper. That wrapper documents the
+historical reference design and remains executable only for evaluator lineage
+and adversarial tests.
 The policy
 loader verifies the registry bytes against a SHA-256 embedded in the immutable
 workflow before it evaluates any result.

@@ -56,10 +56,30 @@ class LeanContractTests(unittest.TestCase):
 
     def test_audit_pin_drift_is_rejected(self) -> None:
         mutated = self.template.replace(
-            self.contract["central_audit_workflow"]["pin"], "0" * 40, 1
+            self.contract["central_audit"]["reusable_scanner"]["pin"], "0" * 40, 1
         )
         with self.assertRaisesRegex(LeanContractError, "versioned central pin"):
             verify(self.contract, mutated, self.documentation, self.workflows)
+
+    def test_declared_caller_path_must_match_the_template(self) -> None:
+        contract = copy.deepcopy(self.contract)
+        contract["central_audit"]["caller_template"]["path"] = ".github/workflows/security-scan.yml"
+        with self.assertRaisesRegex(LeanContractError, "caller-template contract"):
+            verify(contract, self.template, self.documentation, self.workflows)
+
+    def test_declared_scanner_path_must_match_the_reusable_workflow(self) -> None:
+        contract = copy.deepcopy(self.contract)
+        contract["central_audit"]["reusable_scanner"]["path"] = "workflow-templates/security.yml"
+        with self.assertRaisesRegex(LeanContractError, "reusable-scanner contract"):
+            verify(contract, self.template, self.documentation, self.workflows)
+
+    def test_declared_scanner_events_must_match_the_reusable_workflow(self) -> None:
+        workflows = dict(self.workflows)
+        workflows["security-scan.yml"] = workflows["security-scan.yml"].replace(
+            "  workflow_call:\n", "  schedule:\n    - cron: '0 0 * * 0'\n", 1
+        )
+        with self.assertRaisesRegex(LeanContractError, "scanner events do not match"):
+            verify(self.contract, self.template, self.documentation, workflows)
 
     def test_reference_marker_removal_is_rejected(self) -> None:
         workflows = dict(self.workflows)
