@@ -83,7 +83,7 @@ class LeanContractTests(unittest.TestCase):
 
     def test_central_release_instruction_is_rejected(self) -> None:
         documentation = self.documentation + (
-            "\nRelease workflows call the organization `security-release.yml` wrapper.\n"
+            "\nrelease workflow calls the organization `security-release.yml` WRAPPER.\n"
         )
         with self.assertRaisesRegex(LeanContractError, "prohibited central hot-path guidance"):
             verify(self.contract, self.template, documentation, self.workflows)
