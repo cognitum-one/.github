@@ -879,9 +879,7 @@ def _verify_revision(source: str, allow_unresolved_self_pin: bool) -> None:
     )
 
 
-def _verify_template(
-    source: str, expected_pin: str, allow_unresolved_self_pin: bool
-) -> None:
+def _verify_template(source: str, allow_unresolved_self_pin: bool) -> None:
     _require(
         source,
         (
@@ -912,8 +910,6 @@ def _verify_template(
     if not match:
         raise WorkflowPolicyError("security caller template is not full-SHA pinned")
     pin = match.group(1)
-    if pin != expected_pin:
-        raise WorkflowPolicyError("security caller template and PR2 pin differ")
     if pin == ZERO_SHA and not allow_unresolved_self_pin:
         raise WorkflowPolicyError("security caller template pin is unresolved")
 
@@ -936,8 +932,11 @@ def _verify_selftest(source: str) -> None:
             "python3 security/test_security_findings.py",
             "python3 security/test_security_scan_osv_status.py",
             "python3 security/test_security_release_workflow.py",
+            "python3 security/test_verify_lean_ci_contract.py",
+            "python3 security/verify_lean_ci_contract.py",
             "python3 -m json.tool workflow-templates/security.properties.json >/dev/null",
             "python3 -m json.tool security/security-policy-v1.json >/dev/null",
+            "python3 -m json.tool security/lean-ci-contract-v1.json >/dev/null",
             'ACTIONLINT_VERSION: "1.7.12"',
             'ACTIONLINT_SHA256: "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8"',
             'echo "${ACTIONLINT_SHA256}  ${ARCHIVE}" | sha256sum -c -',
@@ -1024,7 +1023,7 @@ def verify(
     workflow_pin = release_environment["STATIC_UI_WORKFLOW_COMMIT"]
     if revision_environment.get("STATIC_UI_WORKFLOW_COMMIT") != workflow_pin:
         raise WorkflowPolicyError("release and revision workflow self-pins differ")
-    _verify_template(template, workflow_pin, allow_unresolved_self_pin)
+    _verify_template(template, allow_unresolved_self_pin)
     policy_commits = {value.get("OSV_POLICY_COMMIT") for value in environments}
     if len(policy_commits) != 1 or not SHA1_RE.fullmatch(
         next(iter(policy_commits)) or ""

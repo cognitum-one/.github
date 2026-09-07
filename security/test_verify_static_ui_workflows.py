@@ -881,7 +881,7 @@ class StaticUiWorkflowPolicyTests(unittest.TestCase):
                 with self.assertRaises(WorkflowPolicyError):
                     self._verify(self._mutate("security", old, new))
 
-    def test_security_caller_template_cannot_float_or_omit_bridge_secrets(self) -> None:
+    def test_fleet_audit_template_cannot_float_or_omit_bridge_secrets(self) -> None:
         pin_match = re.search(
             r"security-scan\.yml@([0-9a-f]{40})",
             self.sources["template"],
@@ -932,6 +932,10 @@ class StaticUiWorkflowPolicyTests(unittest.TestCase):
             (
                 "python3 security/test_verify_static_ui_workflows.py",
                 'echo "mutation tests omitted"',
+            ),
+            (
+                "python3 security/test_verify_lean_ci_contract.py",
+                'echo "lean contract mutation tests omitted"',
             ),
             (
                 "python3 security/verify_static_ui_workflows.py",

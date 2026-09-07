@@ -1,7 +1,25 @@
-# Org security scanning
+# Org security reference tooling and fleet audits
 
-Self-hosted secret + dependency scanning for all `cognitum-one` repos. Runs on
-our own CI — **no GitHub paid Advanced Security / auto-protection required.**
+This repository retains the reviewed SecurityPolicy/v1 evaluator, reusable
+scanner, evidence schemas, adversarial tests, optional templates, and fleet
+audit machinery. It is not the delivery control plane for product repositories.
+
+## Lean CI/CD boundary (governing)
+
+**Product hot-path ownership is local.** A product pull request, merge, release,
+or deployment must not depend on any reusable workflow in this repository.
+Each product owns its minimal policy, dependency-aware selector, evaluator,
+receipts, stable `ci / enforcement` and `security / enforcement` contexts, and
+exact-candidate deployment gates. Unknown or malformed impact, workflow,
+security-policy, or classifier changes fail closed to the product's full suite.
+
+Central tooling has four bounded roles: a **reference implementation**, optional
+copy-and-own templates, **scheduled fleet audits**, and **drift reporting**.
+Fleet results can open or prioritize remediation, but do not satisfy product
+rulesets, authorize a merge, or unblock a deployment. The versioned contract is
+`security/lean-ci-contract-v1.json`; its executable negative controls prevent
+this template from regaining product `push`/`pull_request` triggers or the
+protected product security context.
 
 ## Where it runs, and why that changed (2026-08-20)
 
@@ -15,9 +33,9 @@ worth stating precisely because it does not look like an outage: the check goes
 red instantly and reads like a finding, and a repository whose scan never ran is
 indistinguishable from one that passed unless you look at the annotation.
 
-Two consequences that are easy to get wrong:
+Two historical constraints still apply to optional audits:
 
-- **Consumers pin this workflow by full commit sha**, so a repository stays on
+- **Audit callers pin this workflow by full commit sha**, so a repository stays on
   whatever version it pinned. Moving the jobs here does not move them for a
   caller until that caller re-pins. A green-looking repo may simply never have
   run.
@@ -33,10 +51,9 @@ Two consequences that are easy to get wrong:
     cancel-in-progress: false
   ```
 
-  `cancel-in-progress: false` is load-bearing. These scans are **required status
-  checks**, and required checks bind per-commit: cancelling a superseded run
-  leaves that commit permanently without a passing scan, which is exactly the
-  state that blocks a back-merge to `rc`.
+  `cancel-in-progress: false` preserves a complete evidence series. These audits
+  are not required product status checks and cannot block a back-merge or
+  deployment; a failed/missing audit becomes visible drift for remediation.
 
 ## `security/static-ui-runtime-profiles.json` is a FIXTURE, not the policy
 
@@ -57,19 +74,19 @@ deliberately left as a named follow-up rather than done quietly.
 
 1. **Pre-commit** (`templates/.pre-commit-config.yaml`) — gitleaks + private-key
    detection before a commit is created. Cheapest place to stop a leak.
-2. **CI** (`.github/workflows/security-scan.yml`) — reusable workflow:
-   blocking gitleaks over current files, blocking OSV policy over every
-   discovered lockfile, blocking workflow supply-chain policy, plus an
-   informational full-history secret audit on scheduled/manual runs. The
-   fail-closed fan-in is the stable `security / enforcement` context when the
-   caller job is named `security`.
-3. **Org sweep** — the weekly `schedule:` trigger gives every repo a recurring
-   drift check; results feed the weekly QE report.
+2. **Product CI** — repository-local current-file secrets, dependency ratchet,
+   workflow integrity, and affected code/contracts. Its fail-closed fan-in owns
+   the stable product `security / enforcement` context.
+3. **Central audit** (`.github/workflows/security-scan.yml`) — reusable reference
+   scanner invoked only by scheduled/manual fleet-audit callers. Its receipts
+   feed drift reporting and remediation; they are not merge/deploy gates.
 
 ## SecurityPolicy/v1 and evidence receipts
 
-The aggregate job remains named `enforcement`, preserving the stable
-`security / enforcement` context. Its control mode is now selected only by the
+The reference aggregate job remains named `enforcement` to preserve evaluator
+lineage and reproducible receipts. A scheduled caller is deliberately named
+`fleet-audit`, so it cannot produce the product's stable
+`security / enforcement` context. Its control mode is selected only by the
 organization-owned `security/security-policy-v1.json` registry, keyed by the
 immutable GitHub repository numeric ID. A caller cannot pass a mode or baseline
 as an input. The four current pilot IDs are Cognitum, Website, University, and
@@ -106,9 +123,10 @@ that exact run, not permission to alter rulesets or deploy production.
 
 ## Required contexts and bypass boundary
 
-For an ordinary deployable repository, the target-branch ruleset should require:
+For an ordinary deployable repository, the target-branch ruleset should require
+repository-local contexts only:
 
-- `security / enforcement` from a caller job named `security`;
+- repository-local `security / enforcement`;
 - the repository's existing aggregate CI context;
 - one code-owner approval when a change touches workflows, security or
   dependency policy, CODEOWNERS, or deployment files; and
@@ -122,10 +140,11 @@ weaken a repository such as `due-diligence-harness` when its existing protection
 also applies to administrators or otherwise exceeds this baseline.
 
 Repository rulesets cannot make a bypassed red merge safe to deploy. Every
-deployment workflow must independently rerun the immutable security workflow on
-the exact candidate SHA and make the deploy job declare both aggregate CI and
-security as dependencies (for example, `needs: [ci, security]`). The deploy job
-must consume that same SHA and remain skipped when either dependency is red.
+deployment workflow must independently rerun its repository-local security
+evaluator on the exact candidate SHA and declare both local aggregate CI and
+security as dependencies. The deploy job must consume that same SHA and remain
+skipped when either dependency is red. Calling `security-release.yml` or any
+other central reusable workflow from this hot path is prohibited.
 Routine deploy authority belongs only to CI deployment service accounts; human
 break-glass access remains separately approved and audited.
 
@@ -158,10 +177,11 @@ run, ordinary merge-block result, and exact-SHA deploy-skip result, then close
 the PR without merging. No production artifact or data mutation is authorized
 by that test.
 
-## Rollout (per repo)
+## Optional scheduled fleet-audit template
 
 ```bash
-# CI: add the caller workflow
+# Optional audit only: copy, review, and pin the scheduled/manual caller.
+# Do not use it as a product PR, merge, release, or deployment gate.
 mkdir -p .github/workflows
 curl -fsSL https://raw.githubusercontent.com/cognitum-one/.github/main/workflow-templates/security.yml \
   -o .github/workflows/security.yml
@@ -172,8 +192,8 @@ curl -fsSL https://raw.githubusercontent.com/cognitum-one/.github/main/templates
 pre-commit install
 ```
 
-Or add the CI workflow from the GitHub UI: **Actions → New workflow →
-"Security scan (cognitum-one)"**.
+Or add the audit from the GitHub UI. Product repositories must separately retain
+their local enforcement workflows and stable required contexts.
 
 ## Allowlist
 
@@ -325,16 +345,17 @@ tuple that Actions supplies to every repository does not. Once any runtime
 evidence field is non-empty, all five evidence fields and the complete GitHub
 run tuple are mandatory and verification fails closed on every omission.
 
-Website proof additionally checks out the profile-pinned private Beacon commit
+The legacy Website reference path additionally checks out the profile-pinned private Beacon commit
 outside the candidate using the narrowly scoped
-`STATIC_UI_BEACON_READ_TOKEN`. The caller maps only that secret:
+`STATIC_UI_BEACON_READ_TOKEN`. This example documents the retained evaluator;
+it must not be copied into a product hot path:
 
 ```yaml
 permissions:
   contents: read
 
 jobs:
-  security:
+  fleet-audit:
     permissions:
       contents: read
     uses: cognitum-one/.github/.github/workflows/security-scan.yml@<FULL_ORG_SHA>
@@ -358,17 +379,15 @@ ID), while pre-merge values must match the narrower
 comment syntax such as `#`, so the bytes hashed in the receipt are exactly the
 bytes consumed by Vite.
 
-## Trusted staging image and attestation
+## Legacy reference staging image and attestation
 
-`.github/workflows/static-ui-release.yml` is the organization-owned release
-builder for the two approved profiles. A caller must pin it by the final full
-organization commit, grant only `contents: read`, `id-token: write`,
-and `attestations: write`, and map the exact staging WIF, builder service
-account, and (for website) Beacon read token. Artifact Registry authentication
-comes only from that dedicated GCP WIF identity; the workflow has no GitHub
-Packages write permission. Both the calling workflow and GCP WIF policy must
-identify the reusable workflow by its exact `job_workflow_ref`. The workflow
-rejects any identity other than
+`.github/workflows/static-ui-release.yml` is retained as a tested historical
+reference for the two approved profiles. Product workflows must reimplement and
+own any needed contract locally rather than pinning this central workflow.
+The reference grants only `contents: read`, `id-token: write`, and
+`attestations: write`; Artifact Registry authentication uses the dedicated GCP
+WIF identity and has no GitHub Packages write permission. It rejects identities
+other than
 `website-frontend-deploy-stg@cognitum-20260110.iam.gserviceaccount.com` or
 `management-ui-deploy-stg@cognitum-20260110.iam.gserviceaccount.com` with its
 matching environment-isolated provider.
@@ -399,16 +418,16 @@ The workflow:
 6. compares the verified statement's exact subject and predicate to the
    independently revalidated release receipt and uploads non-secret evidence.
 
-This reusable workflow builds, pushes, attests, and verifies. It contains no
+This reference workflow builds, pushes, attests, and verifies. It contains no
 Cloud Run deploy, traffic, invoker, IAM, billing, Secret Manager mutation, or
-production authority. A caller must make any later staging deploy/promotion job
-depend on the successful reusable job and must consume its exact
-`image_name@image_digest` output. Production remains separately authorized and
-is not enabled by this contract.
+production authority. It is not an approved dependency for any current staging
+or production path; product-local workflows own those gates and exact digest
+hand-offs.
 
 ## Cloud Run revision verification
 
-`.github/workflows/static-ui-revision.yml` is a read-only post-deployment gate.
+`.github/workflows/static-ui-revision.yml` is retained as a read-only reference
+verifier, not a product post-deployment dependency.
 It authenticates a dedicated verifier and runs only `gcloud run revisions
 describe` and `gcloud run services describe`. It requires a pre-deployment
 expected environment contract plus the canonical spec digest captured from the

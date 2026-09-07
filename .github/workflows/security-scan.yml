@@ -1,6 +1,9 @@
 name: security-scan
 
-# Reusable org-wide security scan. Callers:
+# Reference and scheduled fleet-audit scanner. Product merge and deployment
+# hot paths must use repository-local evaluators and receipts; this reusable
+# workflow must not provide a required product status or deployment dependency.
+# Optional scheduled/manual audit callers:
 #   jobs.scan.uses: cognitum-one/.github/.github/workflows/security-scan.yml@<full-commit-sha>
 #
 # Secrets are scanned in TWO modes (ADR-092):
@@ -14,8 +17,9 @@ name: security-scan
 # and reusable workflows require full commit SHAs, container Actions require an
 # image digest, checkout credentials must not persist without a bounded reviewed
 # push exception, and registry-executed packages must use exact versions.
-# The final job is deliberately named `enforcement`. With the caller job named
-# `security`, GitHub exposes the stable `security / enforcement` context.
+# The historical final job remains named `enforcement` so the evaluator stays
+# reproducible. Fleet-audit callers must not name their job `security`; the
+# stable product `security / enforcement` context is repository-local.
 # OSV policy: every High/Critical vulnerability with a fix blocks. Candidate
 #   lockfile `dev` flags are not trusted to downgrade findings. A repository with
 #   no dependency manifests at all PASSES: osv-scanner exits 128 with "No package

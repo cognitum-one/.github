@@ -1,8 +1,9 @@
 name: security-release
 
-# Central release boundary: this workflow deliberately calls the immutable
-# SecurityPolicy/v1 scanner again for the caller's exact candidate. It does not
-# trust an earlier PR result or permit a caller-selected policy mode.
+# Legacy reference implementation only. Product release and deployment hot
+# paths must not call this central workflow; they own the exact-candidate
+# security rerun and receipt inside the product repository. It remains here to
+# preserve the reviewed SecurityPolicy/v1 evaluator and adversarial fixtures.
 on:
   workflow_call:
     inputs:

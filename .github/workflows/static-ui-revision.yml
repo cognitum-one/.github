@@ -1,5 +1,8 @@
 name: verify-static-ui-revision
 
+# Reference receipt tooling only. Product merge/deployment hot paths must not
+# depend on this central reusable workflow.
+
 # Read-only post-deployment verifier. The caller must make its deploy/promotion
 # job depend on trusted-static-ui-release first; this workflow then proves the
 # exact Ready revision, image digest, runtime identity, spec/environment,

@@ -1,53 +1,38 @@
-name: security
+name: scheduled fleet security audit
 
-# Org security scan for this repo — calls the shared reusable workflow.
-# Add via GitHub UI: Actions -> New workflow -> "Security scan (cognitum-one)".
+# Optional central drift audit. Product pull-request, merge, and deployment gates
+# must be implemented and enforced inside the product repository; this template
+# must never provide their required `security / enforcement` context.
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-  pull_request:
   schedule:
     - cron: "0 6 * * 1" # Mondays 06:00 UTC — weekly drift sweep
 
 permissions:
   contents: read
 
-# NOT optional. Each run of the shared workflow builds a container image for the
-# static-UI receipt, so without a group four merges inside two minutes produce
+# Each audit run builds a container image for the static-UI receipt, so without
+# a group four merges inside two minutes produce
 # four simultaneous docker builds. Measured on cognitum-one/website 2026-08-20:
 # 13 of 13 self-hosted runners busy and production publishes queued behind them
 # for about an hour.
 #
-# cancel-in-progress is FALSE deliberately. These scans are used as REQUIRED
-# status checks, and required checks bind per-commit: cancelling a superseded
-# run leaves that commit permanently without a passing scan, which blocks a
-# back-merge to `rc` in a way that is genuinely hard to diagnose.
+# cancel-in-progress is false so every scheduled/manual audit keeps a complete
+# drift receipt. These results are evidence, not product merge/deploy authority.
 concurrency:
   group: security-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
-  security:
-    name: security
+  fleet-audit:
+    name: fleet audit
     permissions:
       contents: read
-    # DO NOT edit this sha by hand. verify_static_ui_workflows.py requires it to
-    # equal STATIC_UI_WORKFLOW_COMMIT in static-ui-release.yml and
-    # static-ui-revision.yml, so the template, the release gate and the revision
-    # gate all name one approved workflow commit. Advancing it is a deliberate
-    # act on all three together, not a template edit.
-    #
-    # Consequence worth knowing when you adopt this: this pin currently predates
-    # the 2026-08-20 changes, so a repository copying the template verbatim gets
-    # a scan whose jobs are still `runs-on: ubuntu-*` and therefore cannot start
-    # at all while the Actions billing stop lasts, and which verifies the receipt
-    # against the organization profile copy rather than the repository's own
-    # .github/static-ui-profile.json. Re-pin to the current approved commit after
-    # adopting; cognitum-one/website and cognitum-one/management are on
-    # 55c796af88bcfa1a7cc51d7983fd7e5d4b261b20.
-    uses: cognitum-one/.github/.github/workflows/security-scan.yml@e0a423bede1c7855e62b27832ec5cc0167c13d03
+    # This audit pin is reviewed independently from the legacy static-UI release
+    # workflow pins. It names the frozen #91 base containing SecurityPolicy/v1
+    # and the latest merged evidence-provenance fixes.
+    uses: cognitum-one/.github/.github/workflows/security-scan.yml@74a6a55a314a8701386942f04170ae4cc9807741
     # Required only for cognitum-one/website. Other repositories may omit the
     # mapping; the shared workflow never receives unrelated repository secrets.
     #
