@@ -56,7 +56,8 @@ jobs:
             security/static_ui_release_gate.py \
             security/verify_static_ui_workflows.py \
             security/security_policy.py \
-            security/security_findings.py
+            security/security_findings.py \
+            security/verify_lean_ci_contract.py
           python3 security/test_osv_gate.py
           python3 security/test_run_osv_scan.py
           python3 security/test_static_ui_runtime_receipt.py
@@ -68,10 +69,13 @@ jobs:
           python3 security/test_security_findings.py
           python3 security/test_security_scan_osv_status.py
           python3 security/test_security_release_workflow.py
+          python3 security/test_verify_lean_ci_contract.py
+          python3 security/verify_lean_ci_contract.py
           node --test security/test_verify_workflow_pins.mjs
           node security/verify_workflow_pins.mjs .
           python3 -m json.tool workflow-templates/security.properties.json >/dev/null
           python3 -m json.tool security/security-policy-v1.json >/dev/null
+          python3 -m json.tool security/lean-ci-contract-v1.json >/dev/null
 
       - name: Run hash-verified actionlint and ShellCheck
         env:

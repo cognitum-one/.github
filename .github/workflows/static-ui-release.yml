@@ -1,5 +1,8 @@
 name: trusted-static-ui-release
 
+# Legacy reference implementation. Product deployment hot paths must not depend
+# on this central reusable workflow; local product workflows own release gates.
+
 # Organization-owned trusted builder for the two approved static browser UIs.
 # This workflow builds current main, pushes one exact digest, signs the custom
 # runtime receipt, and verifies the signer/subject/predicate before returning

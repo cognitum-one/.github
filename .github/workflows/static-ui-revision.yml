@@ -1,9 +1,12 @@
 name: verify-static-ui-revision
 
-# Read-only post-deployment verifier. The caller must make its deploy/promotion
-# job depend on trusted-static-ui-release first; this workflow then proves the
-# exact Ready revision, image digest, runtime identity, spec/environment,
-# ingress, empty volume/mount set, and singular 100% traffic allocation.
+# Reference receipt tooling only. Product merge/deployment hot paths must not
+# depend on this central reusable workflow.
+
+# Historical read-only post-deployment verifier. Its reference contract proves
+# the exact Ready revision, image digest, runtime identity, spec/environment,
+# ingress, empty volume/mount set, and singular 100% traffic allocation. Current
+# products reimplement and own that verification locally.
 
 on:
   workflow_call:

@@ -1,0 +1,44 @@
+{
+  "schema": "cognitum-lean-ci-contract/v1",
+  "product_hot_path": {
+    "owner": "product-repository",
+    "stable_contexts": ["ci / enforcement", "security / enforcement"],
+    "prohibited_central_dependencies": [
+      ".github/workflows/security-scan.yml",
+      ".github/workflows/security-release.yml",
+      ".github/workflows/static-ui-release.yml",
+      ".github/workflows/static-ui-revision.yml"
+    ],
+    "fail_closed_inputs": [
+      "unknown-impact",
+      "malformed-impact",
+      "security-policy-change",
+      "workflow-change"
+    ]
+  },
+  "central_roles": [
+    "reference-implementation",
+    "optional-template",
+    "scheduled-fleet-audit",
+    "drift-reporting"
+  ],
+  "central_audit": {
+    "caller_template": {
+      "path": "workflow-templates/security.yml",
+      "events": ["schedule", "workflow_dispatch"]
+    },
+    "reusable_scanner": {
+      "path": ".github/workflows/security-scan.yml",
+      "events": ["workflow_call"],
+      "pin": "74a6a55a314a8701386942f04170ae4cc9807741"
+    }
+  },
+  "human_only": [
+    "production-merge",
+    "iam",
+    "secrets",
+    "rulesets",
+    "release-tags",
+    "production-exceptions"
+  ]
+}
