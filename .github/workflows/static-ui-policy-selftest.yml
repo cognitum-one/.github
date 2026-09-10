@@ -68,6 +68,7 @@ jobs:
           python3 security/test_security_policy.py
           python3 security/test_security_findings.py
           python3 security/test_security_scan_osv_status.py
+          python3 security/test_security_scan_mode.py
           python3 security/test_security_release_workflow.py
           python3 security/test_verify_lean_ci_contract.py
           python3 security/verify_lean_ci_contract.py

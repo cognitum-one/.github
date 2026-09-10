@@ -88,8 +88,10 @@ lineage and reproducible receipts. A scheduled caller is deliberately named
 `fleet-audit`, so it cannot produce the product's stable
 `security / enforcement` context. Its control mode is selected only by the
 organization-owned `security/security-policy-v1.json` registry, keyed by the
-immutable GitHub repository numeric ID. A caller cannot pass a mode or baseline
-as an input. The four current pilot IDs are Cognitum, Website, University, and
+immutable GitHub repository numeric ID. A caller cannot pass a control mode or
+a baseline as an input; the separate `mode` input described below decides only
+whether a dependency refusal is enforced or advisory and never changes a
+verdict. The four current pilot IDs are Cognitum, Website, University, and
 Consultants; an unregistered repository uses the existing all-`enforce` strict
 profile.
 
@@ -120,8 +122,40 @@ or package version normalizes to a distinct finding ID and fails the ratchet.
 Every evaluated run uploads `security-evidence-v1.json` as the
 `security-evidence-v1` artifact. It records the policy revision, immutable
 repository ID, source and workflow SHA, producer, per-control results and
-findings, baseline matches, exceptions/expiry, and verdict. It is evidence for
-that exact run, not permission to alter rulesets or deploy production.
+findings, baseline matches, exceptions/expiry, verdict, the enforcement `mode`
+the run resolved to, and the `advisory` list of refusals that mode left
+unenforced (always empty in `enforce` mode). It is evidence for that exact run,
+not permission to alter rulesets or deploy production.
+
+## Enforcement mode: advisory on pull requests (2026-09-10)
+
+The reusable scanner is still called on `pull_request` by about forty
+repositories, and some of them require its `scan / enforcement` and
+`scan / dependency scan (OSV, fail on High+ fixable)` contexts. A dependency
+advisory that appears overnight, or a red `main`, therefore blocked every
+unrelated branch. The lean delivery split
+(<https://github.com/cognitum-one/cognitum/blob/main/docs/qe-plans/2026-09-10-lean-delivery-dev-prod-split.md>)
+makes the dependency policy advisory on pull requests everywhere and blocking
+only where a production path starts. The `mode` input of `security-scan.yml`
+implements that; job names and status contexts are unchanged.
+
+| `mode` input | Resolves to | Dependency refusals (`enforce`/`ratchet` findings) | Secrets, workflow pins, failed or skipped controls, release evidence, integrity faults |
+|---|---|---|---|
+| `auto` (default) on `pull_request` | `advisory` | recorded in the receipt, `::warning::` plus a summary line reading "ADVISORY on pull_request: would have FAILED"; the job passes | fail the job |
+| `auto` on `push`, `schedule`, `workflow_dispatch`, any other event | `enforce` | fail the job | fail the job |
+| `advisory` | `advisory` | as the first row, on every event | fail the job |
+| `enforce` | `enforce` | fail the job on every event | fail the job |
+| anything else | refused | the `enforcement` job fails before evaluating | fail the job |
+
+The mode is applied by `security/security_policy.py` after the verdict is
+computed, so an advisory receipt still carries `"verdict": "fail"` and the full
+`blocking` list; only the process exit differs. A waiver must match the
+evaluator's own dependency refusal text byte for byte, so nothing but a
+completed dependency finding under an `enforce` or `ratchet` control can be
+left unenforced. A caller that wants the historical behaviour on pull requests
+passes `with: { mode: enforce }`; a caller pinned to a full commit SHA sees no
+change until it re-pins. The full-history secret audit, the current-tree secret
+scan, and the workflow supply-chain policy have no mode branch at all.
 
 ## Required contexts and bypass boundary
 
