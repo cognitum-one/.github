@@ -1,6 +1,6 @@
 {
   "schema": "SecurityPolicy/v1",
-  "revision": "2026-09-10.1",
+  "revision": "2026-09-10.2",
   "producer": "cognitum-one/.github/.github/workflows/security-scan.yml",
   "controls": ["secrets", "dependencies", "workflow_pins"],
   "profiles": {
@@ -83,6 +83,31 @@
         "dependencies:eaa3b1577c56bba6f7603d67b46cabacdf7d99e216e73b00e4560293d528529c",
         "dependencies:ed25491dd28fcdd05597791786120b60178307fd91aaa3c5d8dfd349d453ea8b",
         "dependencies:ff18dd2901516352849b2cb81550c595308557d14ce3ed1da58cc61ce98e65f6"
+      ]
+    },
+    {
+      "id": "api-dependencies-20260910",
+      "repository_id": "1225722174",
+      "control": "dependencies",
+      "owner": "cognitum-one/.github SecurityPolicy/v1 maintainers",
+      "expires_at": "2026-12-09",
+      "evidence": {
+        "repository": "cognitum-one/api",
+        "pull_request": 253,
+        "run_id": "34475628021",
+        "source_sha": "d7848105ad055e758b501602005a2e3a53eaf49b",
+        "base_sha": "1021ccaf4866f2605c88474b94e9b3285bafd44e",
+        "workflow_sha": "711ad79b6fa40ce9419ccbbcb47c1ac35606e766",
+        "lockfile_blobs": {
+          "package-lock.json": "6ec7750874dcc715b7d6496cc3b146ae22e0e843",
+          "functions/api/package-lock.json": "5cc5a212555fc4a2f113aef8fed50a595dd8070f",
+          "functions/seed/package-lock.json": "91154393f96078f00651c080ba9b72be84c597b0",
+          "functions/lyria-broker/package-lock.json": "450ddeeab43216cd4a16b485637ee8461881a8bb"
+        }
+      },
+      "findings": [
+        "dependencies:0ebe29bf3879f80470fcc59df7503e3cd4449ddac76f0c7a3e96645afb2c9569",
+        "dependencies:57402b8fc3d19df2b2514ff10c40f9d6dbccd8e1298f358adb430a77c30a0c73"
       ]
     }
   ]
