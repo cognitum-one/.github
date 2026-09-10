@@ -1,6 +1,6 @@
 {
   "schema": "SecurityPolicy/v1",
-  "revision": "2026-09-04.3",
+  "revision": "2026-09-10.1",
   "producer": "cognitum-one/.github/.github/workflows/security-scan.yml",
   "controls": ["secrets", "dependencies", "workflow_pins"],
   "profiles": {
@@ -33,13 +33,19 @@
       "secrets": "enforce",
       "dependencies": "ratchet",
       "workflow_pins": "observe"
+    },
+    "api-pilot": {
+      "secrets": "enforce",
+      "dependencies": "ratchet",
+      "workflow_pins": "enforce"
     }
   },
   "repositories": {
     "1211713708": {"name": "cognitum-one/cognitum", "profile": "cognitum-pilot"},
     "1235738436": {"name": "cognitum-one/website", "profile": "website-pilot"},
     "1270428105": {"name": "cognitum-one/university", "profile": "university-pilot"},
-    "1304159334": {"name": "cognitum-one/cognitum-consultants", "profile": "consultants-pilot"}
+    "1304159334": {"name": "cognitum-one/cognitum-consultants", "profile": "consultants-pilot"},
+    "1225722174": {"name": "cognitum-one/api", "profile": "api-pilot"}
   },
   "baselines": [
     {
