@@ -8,11 +8,20 @@ import datetime as dt
 import hashlib
 import json
 from pathlib import Path
+import subprocess
+import sys
 import tempfile
 import unittest
 
 from security_findings import normalize
-from security_policy import PolicyError, evaluate, load_policy
+from security_policy import (
+    PolicyError,
+    advisory_waivable,
+    apply_enforcement_mode,
+    enforced_blocking,
+    evaluate,
+    load_policy,
+)
 
 
 class SecurityPolicyTests(unittest.TestCase):
@@ -267,6 +276,154 @@ class SecurityPolicyTests(unittest.TestCase):
         self.assertEqual(evaluate(**data)["verdict"], "fail")
         self.assertEqual(evaluate(**dict(data, release_rerun=True, release_candidate_sha="a" * 40))["verdict"], "pass")
         self.assertEqual(evaluate(**dict(data, release_rerun=True, release_candidate_sha="c" * 40))["verdict"], "fail")
+
+
+    # --- enforcement mode -------------------------------------------------
+    # The enforcement mode is a process-exit decision layered over an
+    # unchanged verdict. These tests pin what an advisory run may and may not
+    # leave unenforced.
+
+    def _dependency_finding(self, **overrides: object) -> dict[str, object]:
+        return self._with_findings(
+            {"secrets": [], "dependencies": ["dependencies:new"], "workflow_pins": []},
+            repository_id="9999999999", repository="example/unregistered", **overrides,
+        )
+
+    def test_advisory_waives_only_a_completed_dependency_finding(self) -> None:
+        receipt = apply_enforcement_mode(evaluate(**self._dependency_finding()), "advisory")
+        self.assertEqual(receipt["verdict"], "fail")
+        self.assertEqual(receipt["mode"], "advisory")
+        self.assertEqual(receipt["advisory"], ["dependencies has finding(s): dependencies:new"])
+        self.assertEqual(enforced_blocking(receipt), [])
+
+    def test_advisory_waives_a_new_ratchet_finding_but_keeps_the_fail_verdict(self) -> None:
+        receipt = apply_enforcement_mode(
+            evaluate(**self._with_findings({"secrets": [], "dependencies": ["GHSA-new"], "workflow_pins": []})),
+            "advisory",
+        )
+        self.assertEqual(receipt["controls"]["dependencies"], "ratchet")
+        self.assertEqual(receipt["verdict"], "fail")
+        self.assertEqual(receipt["advisory"], ["dependencies has new finding(s): GHSA-new"])
+        self.assertEqual(enforced_blocking(receipt), [])
+
+    def test_advisory_never_waives_secrets_or_workflow_pins(self) -> None:
+        for control, finding in (("secrets", "secrets:live"), ("workflow_pins", "workflow_pins:mutable")):
+            with self.subTest(control=control):
+                findings = {"secrets": [], "dependencies": ["dependencies:new"], "workflow_pins": []}
+                findings[control] = [finding]
+                receipt = apply_enforcement_mode(evaluate(**self._with_findings(
+                    findings, repository_id="9999999999", repository="example/unregistered",
+                )), "advisory")
+                self.assertEqual(receipt["verdict"], "fail")
+                # The dependency entry is waived; the other control still refuses.
+                self.assertEqual(receipt["advisory"], ["dependencies has finding(s): dependencies:new"])
+                self.assertEqual(enforced_blocking(receipt), [f"{control} has finding(s): {finding}"])
+
+    def test_advisory_never_waives_a_failed_skipped_or_release_dependency_control(self) -> None:
+        for result in ("failure", "skipped", "cancelled"):
+            with self.subTest(result=result):
+                data = self._dependency_finding()
+                data["results"] = {**data["results"], "dependencies": result}
+                receipt = apply_enforcement_mode(evaluate(**data), "advisory")
+                self.assertEqual(receipt["advisory"], [])
+                self.assertEqual(enforced_blocking(receipt), [f"dependencies={result}"])
+        policy = copy.deepcopy(self.policy)
+        policy["repositories"]["1235738436"]["profile"] = "release-candidate"
+        receipt = apply_enforcement_mode(evaluate(**self._with_findings(
+            {"secrets": [], "dependencies": ["dependencies:new"], "workflow_pins": []},
+            policy=policy, repository_id="1235738436", repository="cognitum-one/website",
+        )), "advisory")
+        self.assertEqual(receipt["advisory"], [])
+        self.assertTrue(enforced_blocking(receipt))
+
+    def test_enforce_mode_waives_nothing_and_unknown_modes_are_refused(self) -> None:
+        receipt = apply_enforcement_mode(evaluate(**self._dependency_finding()), "enforce")
+        self.assertEqual(receipt["mode"], "enforce")
+        self.assertEqual(receipt["advisory"], [])
+        self.assertEqual(enforced_blocking(receipt), receipt["blocking"])
+        for mode in ("observe", "auto", "", "ADVISORY"):
+            with self.subTest(mode=mode), self.assertRaisesRegex(PolicyError, "enforcement mode"):
+                apply_enforcement_mode(evaluate(**self.good), mode)
+
+    def test_enforcement_mode_never_changes_the_verdict_or_blocking_list(self) -> None:
+        for data in (self.good, self._dependency_finding()):
+            base = evaluate(**data)
+            for mode in ("enforce", "advisory"):
+                annotated = apply_enforcement_mode(base, mode)
+                self.assertEqual(annotated["verdict"], base["verdict"])
+                self.assertEqual(annotated["blocking"], base["blocking"])
+                self.assertEqual({k: v for k, v in annotated.items() if k not in ("mode", "advisory")}, base)
+
+    def test_waivable_entries_must_match_the_evaluator_text_exactly(self) -> None:
+        receipt = evaluate(**self._dependency_finding())
+        tampered = dict(receipt, blocking=[receipt["blocking"][0] + " "])
+        self.assertEqual(advisory_waivable(tampered), [])
+        tampered = dict(receipt, blocking=["dependencies has finding(s): dependencies:other"])
+        self.assertEqual(advisory_waivable(tampered), [])
+
+    # --- advisories are evidence, findings are what counts -----------------
+
+    def test_advisories_are_recorded_but_never_counted(self) -> None:
+        data = dict(self.good, repository_id="9999999999", repository="example/unregistered")
+        receipt = evaluate(**data, advisories={"dependencies": ["dependencies:mod", "dependencies:nofix"]})
+        self.assertEqual(receipt["verdict"], "pass")
+        self.assertEqual(receipt["advisories"]["dependencies"], ["dependencies:mod", "dependencies:nofix"])
+        self.assertEqual(receipt["findings"]["dependencies"], [])
+        receipt = evaluate(**self._dependency_finding(), advisories={"dependencies": ["dependencies:new", "dependencies:mod"]})
+        self.assertEqual(receipt["verdict"], "fail")
+        self.assertEqual(receipt["blocking"], ["dependencies has finding(s): dependencies:new"])
+        # A counted finding that the producer never observed is an integrity fault.
+        with self.assertRaisesRegex(PolicyError, "not among its observed advisories"):
+            evaluate(**self._dependency_finding(), advisories={"dependencies": ["dependencies:other"]})
+        for bad in ({"unknown": []}, {"dependencies": "x"}, {"dependencies": [""]}, {"dependencies": [1]}):
+            with self.subTest(bad=bad), self.assertRaisesRegex(PolicyError, "advisory evidence"):
+                evaluate(**self.good, advisories=bad)
+        # Omitted or null advisories (a failed producer) degrade to empty evidence.
+        self.assertEqual(evaluate(**self.good, advisories={"dependencies": None})["advisories"]["dependencies"], [])
+        self.assertEqual(evaluate(**self.good)["advisories"], {"secrets": [], "dependencies": [], "workflow_pins": []})
+
+    def _run_cli(self, mode: str, findings: dict[str, list[str]], tmp: Path) -> subprocess.CompletedProcess[str]:
+        completions = self._completions(findings)
+        output = tmp / f"receipt-{mode}-{len(''.join(sum(findings.values(), [])))}.json"
+        command = [
+            sys.executable, str(Path(__file__).with_name("security_policy.py")),
+            "--policy", str(self.path), "--policy-sha256", self.digest,
+            "--repository-id", "9999999999", "--repository", "example/unregistered",
+            "--source-sha", "a" * 40, "--workflow-sha", "b" * 40,
+            "--producer", "cognitum-one/.github/.github/workflows/security-scan.yml",
+            "--results", json.dumps({"secrets": "success", "dependencies": "success", "workflow_pins": "success"}),
+            "--findings", json.dumps(findings), "--completions", json.dumps(completions),
+            "--output", str(output),
+        ]
+        if mode:
+            command += ["--mode", mode]
+        result = subprocess.run(command, text=True, capture_output=True)
+        result.receipt = json.loads(output.read_text(encoding="utf-8")) if output.exists() else None  # type: ignore[attr-defined]
+        return result
+
+    def test_cli_exit_status_follows_the_enforcement_mode(self) -> None:
+        dependency = {"secrets": [], "dependencies": ["dependencies:new"], "workflow_pins": []}
+        secret = {"secrets": ["secrets:live"], "dependencies": ["dependencies:new"], "workflow_pins": []}
+        with tempfile.TemporaryDirectory() as temporary:
+            tmp = Path(temporary)
+            default = self._run_cli("", dependency, tmp)
+            self.assertNotEqual(default.returncode, 0)
+            self.assertEqual(default.receipt["mode"], "enforce")
+            enforce = self._run_cli("enforce", dependency, tmp)
+            self.assertNotEqual(enforce.returncode, 0)
+            self.assertIn("SecurityPolicy/v1 refused", enforce.stderr)
+            advisory = self._run_cli("advisory", dependency, tmp)
+            self.assertEqual(advisory.returncode, 0, advisory.stderr)
+            self.assertIn("ADVISORY", advisory.stderr)
+            self.assertEqual(advisory.receipt["verdict"], "fail")
+            self.assertEqual(advisory.receipt["advisory"], ["dependencies has finding(s): dependencies:new"])
+            leaked = self._run_cli("advisory", secret, tmp)
+            self.assertNotEqual(leaked.returncode, 0)
+            self.assertIn("secrets has finding(s)", leaked.stderr)
+            self.assertNotIn("dependencies has finding(s)", leaked.stderr.split("refused:")[1])
+            bogus = self._run_cli("observe", dependency, tmp)
+            self.assertNotEqual(bogus.returncode, 0)
+            self.assertIsNone(bogus.receipt)
 
 
 if __name__ == "__main__":

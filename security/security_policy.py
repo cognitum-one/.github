@@ -2,7 +2,14 @@
 """Immutable SecurityPolicy/v1 resolver and evidence-receipt writer.
 
 The registry is owned by this repository and is addressed by immutable workflow
-commit.  A caller supplies observations, never policy mode or a baseline.
+commit.  A caller supplies observations, never a control mode or a baseline.
+
+The enforcement mode (``--mode``) is separate from the per-control policy
+modes.  It never changes the verdict that is written to the receipt.  In
+``advisory`` mode the process exits 0 when the only refusals are completed
+dependency findings under an ``enforce`` or ``ratchet`` control; every other
+refusal (secrets, workflow pins, a failed or skipped control, release
+evidence, integrity errors) still exits non-zero in every mode.
 """
 
 from __future__ import annotations
@@ -13,15 +20,28 @@ import hashlib
 import json
 from pathlib import Path
 import re
+import sys
 from typing import Any
 
 SHA_RE = re.compile(r"[0-9a-f]{40}")
 MODES = frozenset(("observe", "ratchet", "enforce", "release"))
+ENFORCEMENT_MODES = ("enforce", "advisory")
+# The only control whose completed findings an advisory run may leave
+# unenforced. Secrets and workflow pins are blocking in every mode.
+ADVISORY_CONTROLS = frozenset(("dependencies",))
 SUCCESS = "success"
 
 
 class PolicyError(ValueError):
     """Raised when policy integrity or a security decision is invalid."""
+
+
+def _finding_refusal(control: str, observed: list[str]) -> str:
+    return f"{control} has finding(s): {', '.join(sorted(set(observed)))}"
+
+
+def _new_finding_refusal(control: str, new: list[str]) -> str:
+    return f"{control} has new finding(s): {', '.join(new)}"
 
 
 def _strict_json(text: str) -> Any:
@@ -191,6 +211,7 @@ def evaluate(
     today: dt.date,
     release_rerun: bool = False,
     release_candidate_sha: str | None = None,
+    advisories: dict[str, list[str] | None] | None = None,
 ) -> dict[str, Any]:
     if not SHA_RE.fullmatch(source_sha) or not SHA_RE.fullmatch(workflow_sha):
         raise PolicyError("source/workflow SHA must be a full SHA")
@@ -203,6 +224,27 @@ def evaluate(
         raise PolicyError("findings are missing a security subcheck or name an unknown control")
     if set(completions) != set(policy["controls"]):
         raise PolicyError("completion evidence is missing a security subcheck or name an unknown control")
+    # Evidence only. `advisories` is every advisory a producer observed for a
+    # control (for dependencies: the whole --all-vulns report), while
+    # `findings` is the subset the producer's own gate blocks on and the only
+    # set a control mode ever counts. Recording both keeps a Moderate or
+    # unfixable advisory visible in the receipt without letting it decide the
+    # verdict. A finding that is not among its control's advisories is an
+    # integrity fault, never a pass.
+    if advisories is None:
+        advisories = {}
+    if not isinstance(advisories, dict) or not set(advisories) <= set(policy["controls"]):
+        raise PolicyError("advisory evidence names an unknown control")
+    receipt_advisories: dict[str, list[str]] = {}
+    for control in policy["controls"]:
+        observed_advisories = advisories.get(control)
+        if observed_advisories is None:
+            observed_advisories = []
+        if not isinstance(observed_advisories, list) or not all(
+            isinstance(item, str) and item for item in observed_advisories
+        ):
+            raise PolicyError(f"advisory evidence for {control} is invalid")
+        receipt_advisories[control] = sorted(set(observed_advisories))
     baselines = _active_baselines(policy, repository_id, today)
     exceptions: list[dict[str, Any]] = []
     blocking: list[str] = []
@@ -227,6 +269,8 @@ def evaluate(
         }:
             raise PolicyError(f"completion evidence for {control} is missing, malformed, or wrong-producer")
         receipt_findings[control] = sorted(set(observed))
+        if receipt_advisories[control] and not set(observed) <= set(receipt_advisories[control]):
+            raise PolicyError(f"findings for {control} are not among its observed advisories")
         baseline_findings = baselines.get(control, {})
         matched = sorted(set(observed) & set(baseline_findings))
         baseline_matches[control] = matched
@@ -238,7 +282,7 @@ def evaluate(
         if mode == "ratchet":
             new = sorted(set(observed) - set(baseline_findings))
             if new:
-                blocking.append(f"{control} has new finding(s): {', '.join(new)}")
+                blocking.append(_new_finding_refusal(control, new))
             if matched:
                 exceptions.append(
                     {
@@ -251,7 +295,7 @@ def evaluate(
                 )
         elif mode == "enforce":
             if observed:
-                blocking.append(f"{control} has finding(s): {', '.join(sorted(set(observed)))}")
+                blocking.append(_finding_refusal(control, observed))
         elif mode == "release":
             if observed:
                 blocking.append(f"{control} release evidence has finding(s): {', '.join(sorted(set(observed)))}")
@@ -269,6 +313,7 @@ def evaluate(
         "controls": modes,
         "results": results,
         "findings": receipt_findings,
+        "advisories": receipt_advisories,
         "completions": completions,
         "baseline_matches": baseline_matches,
         "exceptions": exceptions,
@@ -276,6 +321,45 @@ def evaluate(
         "verdict": "pass" if not blocking else "fail",
         "blocking": blocking,
     }
+
+
+def advisory_waivable(receipt: dict[str, Any]) -> list[str]:
+    """Return the blocking entries an advisory run may leave unenforced.
+
+    Recomputed from the receipt rather than carried as a flag, so an entry is
+    waivable only when it is byte-identical to the refusal ``evaluate`` writes
+    for a completed dependency finding under ``enforce`` or ``ratchet``.  A
+    failed/skipped control, a ``release`` control, a secrets or workflow-pin
+    refusal, and any unrecognised text are never waivable.
+    """
+    waivable: set[str] = set()
+    for control in sorted(ADVISORY_CONTROLS):
+        if receipt["results"].get(control) != SUCCESS:
+            continue
+        observed = receipt["findings"].get(control, [])
+        matched = receipt["baseline_matches"].get(control, [])
+        mode = receipt["controls"].get(control)
+        if mode == "enforce" and observed:
+            waivable.add(_finding_refusal(control, observed))
+        elif mode == "ratchet":
+            new = sorted(set(observed) - set(matched))
+            if new:
+                waivable.add(_new_finding_refusal(control, new))
+    return [entry for entry in receipt["blocking"] if entry in waivable]
+
+
+def apply_enforcement_mode(receipt: dict[str, Any], mode: str) -> dict[str, Any]:
+    """Annotate a receipt with the enforcement mode; the verdict is untouched."""
+    if mode not in ENFORCEMENT_MODES:
+        raise PolicyError(f"enforcement mode must be one of {', '.join(ENFORCEMENT_MODES)}")
+    advisory = advisory_waivable(receipt) if mode == "advisory" else []
+    return {**receipt, "mode": mode, "advisory": advisory}
+
+
+def enforced_blocking(receipt: dict[str, Any]) -> list[str]:
+    """Blocking entries that still refuse after the enforcement mode is applied."""
+    waived = set(receipt.get("advisory", []))
+    return [entry for entry in receipt["blocking"] if entry not in waived]
 
 
 def main() -> None:
@@ -293,22 +377,39 @@ def main() -> None:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--release-rerun", action="store_true")
     parser.add_argument("--release-candidate-sha")
+    parser.add_argument("--mode", choices=ENFORCEMENT_MODES, default="enforce")
+    parser.add_argument(
+        "--advisories", default="{}",
+        help="JSON object of every observed advisory per control; evidence only, never counted",
+    )
     args = parser.parse_args()
     policy = load_policy(args.policy, args.policy_sha256)
     results = _strict_json(args.results)
     findings = _strict_json(args.findings)
     completions = _strict_json(args.completions)
+    advisories = _strict_json(args.advisories)
     if not isinstance(results, dict) or not isinstance(findings, dict) or not isinstance(completions, dict):
         raise PolicyError("results, findings, and completions must be JSON objects")
+    if not isinstance(advisories, dict):
+        raise PolicyError("advisories must be a JSON object")
     receipt = evaluate(
         policy=policy, repository_id=args.repository_id, repository=args.repository,
         source_sha=args.source_sha, workflow_sha=args.workflow_sha, producer=args.producer,
         results=results, findings=findings, completions=completions, today=dt.date.today(),
         release_rerun=args.release_rerun, release_candidate_sha=args.release_candidate_sha,
+        advisories=advisories,
     )
+    receipt = apply_enforcement_mode(receipt, args.mode)
     args.output.write_text(json.dumps(receipt, sort_keys=True, indent=2) + "\n", encoding="utf-8")
-    if receipt["verdict"] != "pass":
-        raise SystemExit("SecurityPolicy/v1 refused: " + "; ".join(receipt["blocking"]))
+    refused = enforced_blocking(receipt)
+    if refused:
+        raise SystemExit("SecurityPolicy/v1 refused: " + "; ".join(refused))
+    if receipt["advisory"]:
+        print(
+            "SecurityPolicy/v1 ADVISORY (mode=advisory): verdict=fail is recorded but not enforced: "
+            + "; ".join(receipt["advisory"]),
+            file=sys.stderr,
+        )
 
 
 if __name__ == "__main__":

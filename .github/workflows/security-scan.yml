@@ -21,7 +21,12 @@ name: security-scan
 # reproducible. Fleet-audit callers must not name their job `security`; the
 # stable product `security / enforcement` context is repository-local.
 # OSV policy: every High/Critical vulnerability with a fix blocks. Candidate
-#   lockfile `dev` flags are not trusted to downgrade findings. A repository with
+#   lockfile `dev` flags are not trusted to downgrade findings. The `dependencies`
+#   findings handed to SecurityPolicy/v1 are exactly the gate's blocking rows
+#   (fixable High/Critical, fixable-but-unrated, minus the reviewed router
+#   correction), so an `enforce` or `ratchet` profile refuses on what the
+#   producer enforces and not on every Moderate or unfixable advisory
+#   (cognitum-one/.github#98, #99, #100). A repository with
 #   no dependency manifests at all PASSES: osv-scanner exits 128 with "No package
 #   sources found", and the wrapper accepts that only when both invocations agree
 #   and no report was produced. Any other non-zero status still fails closed.
@@ -34,6 +39,19 @@ name: security-scan
 # organization config outside the candidate, disables candidate .gitignore
 # filtering, and emits its report outside the candidate. The correction, scan
 # wrapper, and their negative tests are fetched immutably and hash-verified.
+# Enforcement mode (`mode` input; lean delivery split, 2026-09-10):
+#   auto (default) — advisory on pull_request, enforce on push/schedule/
+#                    workflow_dispatch and every other event.
+#   advisory       — the `enforcement` job still evaluates SecurityPolicy/v1
+#                    and writes the same receipt (verdict unchanged, plus
+#                    `mode` and `advisory` fields), but a completed dependency
+#                    finding under an enforce/ratchet control no longer fails
+#                    the job; it becomes a ::warning:: and a summary line.
+#   enforce        — every refusal fails the job (the historical behaviour).
+#   In EVERY mode: current-tree secret findings, workflow supply-chain
+#   findings, a failed/skipped/cancelled control, release evidence, and
+#   scanner or policy integrity faults still fail. The mode cannot change a
+#   verdict, select a control mode, or add a baseline.
 
 on:
   workflow_call:
@@ -52,6 +70,21 @@ on:
       evidence:
         description: Base64 SecurityPolicy/v1 receipt emitted by the trusted enforcement job.
         value: ${{ jobs.enforcement.outputs.evidence }}
+      mode:
+        description: Enforcement mode the run resolved to (`advisory` or `enforce`).
+        value: ${{ jobs.enforcement.outputs.mode }}
+    inputs:
+      mode:
+        description: >-
+          Enforcement mode for the composite SecurityPolicy/v1 verdict.
+          `auto` (default) is advisory on pull_request and enforce on every
+          other event; `advisory` and `enforce` force it. Only completed
+          dependency findings are ever advisory; secret findings, workflow
+          supply-chain findings, failed controls, and integrity faults block
+          in every mode. Any other value fails the enforcement job.
+        required: false
+        type: string
+        default: auto
 
 permissions:
   contents: read
@@ -78,9 +111,9 @@ env:
   ENFORCEMENT_GATE_SHA256: "09f8ef9671bd420cca2d6a09ca4d0cb642f1920dc46ab237e738480c047cffac"
   ENFORCEMENT_GATE_TEST_SHA256: "d9b3a0dc351c58f22c567a6b8042997f1242ad8c9c6d9af739afaf3e832b6ab1"
   SECURITY_POLICY_SHA256: "45f702a6d6772a88071e2d5fb7a13746a4bcd2aaf4ea8a3f6db5f0a1ddc68318"
-  SECURITY_POLICY_SCRIPT_SHA256: "b737b6e6a195012d2a37678acf48b4098fad5b5be806a4a69529e81c940c4dfd"
-  SECURITY_POLICY_TEST_SHA256: "a8c60de6882eba9d3f549a238f678ff67823448e22fc71bd817d420adf53564f"
-  SECURITY_FINDINGS_SHA256: "37b5ced713f078f7a97a4cf9fdbc3adf7725d7958b0c1b3298a5aa64696ce47a"
+  SECURITY_POLICY_SCRIPT_SHA256: "176105523b9d5157116e16b8611a422c49f012c7d6d4d6c0a715aecaa0aec431"
+  SECURITY_POLICY_TEST_SHA256: "c62c18dbace86f3ce421b4b3c753dd6c0eb0a65602532e95f408badeca77f159"
+  SECURITY_FINDINGS_SHA256: "1d1f65c70cea51fd4e7db26a3f9590145fe9c296421322b52178d836243cfea6"
   SECURITY_WORKFLOW_FINDINGS_SHA256: "6069d449f1fb848c34ed4d84f5cd21f3616acb68156058a1bea0e2951abc76ba"
 
 jobs:
@@ -368,6 +401,7 @@ jobs:
     runs-on: ${{ github.event.repository.visibility == 'public' && 'ubuntu-latest' || fromJSON('["self-hosted","gcp-bypass"]') }}
     outputs:
       findings: ${{ steps.findings.outputs.json }}
+      advisories: ${{ steps.findings.outputs.advisories }}
       completion: ${{ steps.findings.outputs.completion }}
     timeout-minutes: 60
     steps:
@@ -734,6 +768,11 @@ jobs:
           # arrive through `env:` as a context expression: it is not exported as
           # a shell variable, and there is no GITHUB_JOB_WORKFLOW_SHA.
           JOB_WORKFLOW_SHA: ${{ job.workflow_sha }}
+          OSV_RUNTIME_RECEIPT: ${{ steps.runtime.outputs.receipt }}
+          OSV_RUNTIME_INVENTORY: ${{ steps.runtime.outputs.inventory }}
+          OSV_RUNTIME_NONCE: ${{ steps.runtime.outputs.nonce }}
+          OSV_RUNTIME_IMAGE_NAME: ${{ steps.runtime.outputs.image_name }}
+          OSV_RUNTIME_IMAGE_ID: ${{ steps.runtime.outputs.image_id }}
         run: |
           set -euo pipefail
           # Provenance: the immutable SHA of THIS reusable workflow.
@@ -759,8 +798,53 @@ jobs:
           curl --proto '=https' --tlsv1.2 -fsSLo "$FINDINGS_TOOL" \
             "https://raw.githubusercontent.com/cognitum-one/.github/${POLICY_COMMIT}/security/security_findings.py"
           echo "${SECURITY_FINDINGS_SHA256}  ${FINDINGS_TOOL}" | sha256sum -c -
-          FINDINGS="$(python3 "$FINDINGS_TOOL" --control dependencies --report "$RUNNER_TEMP/osv-report.json" --repository-root "$GITHUB_WORKSPACE")"
+          # Classify with the SAME hash-verified gate the next step enforces
+          # with, so the findings SecurityPolicy/v1 sees are its blocking rows
+          # and nothing else. The runtime-receipt tuple is passed through the
+          # step env so the router correction is admitted on identical terms.
+          POLICY_DIR="$RUNNER_TEMP/osv-policy"
+          FINDINGS="$(python3 "$FINDINGS_TOOL" --control dependencies --report "$RUNNER_TEMP/osv-report.json" --repository-root "$GITHUB_WORKSPACE" --osv-gate "$POLICY_DIR/osv_gate.py")"
           echo "json=$FINDINGS" >> "$GITHUB_OUTPUT"
+          # Every advisory in the report, counted or not, travels to the
+          # receipt as evidence; only the gate's rows above count. The rows
+          # the gate does not block on are surfaced here as warnings so a
+          # Moderate or unfixable advisory stays visible without failing.
+          ADVISORIES="$(python3 "$FINDINGS_TOOL" --control dependencies --report "$RUNNER_TEMP/osv-report.json" --repository-root "$GITHUB_WORKSPACE")"
+          echo "advisories=$ADVISORIES" >> "$GITHUB_OUTPUT"
+          FINDINGS="$FINDINGS" ADVISORIES="$ADVISORIES" FINDINGS_TOOL="$FINDINGS_TOOL" \
+          OSV_REPORT="$RUNNER_TEMP/osv-report.json" python3 - <<'PY'
+          import importlib.util
+          import json
+          import os
+          from pathlib import Path
+          spec = importlib.util.spec_from_file_location("security_findings", os.environ["FINDINGS_TOOL"])
+          findings_tool = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(findings_tool)
+          counted = set(json.loads(os.environ["FINDINGS"]))
+          observed = set(json.loads(os.environ["ADVISORIES"]))
+          if not counted <= observed:
+              raise SystemExit("gate-classified findings are not a subset of the observed advisories")
+          informational = observed - counted
+          if not informational:
+              raise SystemExit(0)
+          root = Path(os.environ["GITHUB_WORKSPACE"])
+          report = json.loads(Path(os.environ["OSV_REPORT"]).read_text(encoding="utf-8"))
+          rows = []
+          for result in report["results"]:
+              source = findings_tool._dependency_source_path(result["source"]["path"], root)
+              for package in result["packages"]:
+                  name, version = package["package"]["name"], package["package"]["version"]
+                  for vulnerability in package["vulnerabilities"]:
+                      advisory = vulnerability["id"]
+                      if findings_tool._identifier("dependencies", [source, name, version, advisory]) in informational:
+                          rows.append(f"{name}@{version} {advisory} ({source})")
+          rows = sorted(set(rows))
+          print(f"::warning::{len(rows)} dependency advisory(ies) are informational (below High, or no fixed release): recorded in the receipt, not counted by SecurityPolicy/v1.")
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
+              summary.write(f"## Informational dependency advisories — {len(rows)} not counted\n\n")
+              summary.write("Below High/Critical or without a fixed release. Recorded in `security-evidence-v1` under `advisories`; `findings` holds only the gate's blocking rows.\n\n")
+              summary.write("\n".join(f"- `{row}`" for row in rows[:100]) + "\n")
+          PY
           COMPLETION="$(FINDINGS="$FINDINGS" CONTROL=dependencies POLICY_COMMIT="$POLICY_COMMIT" python3 - <<'PY'
           import json
           import os
@@ -818,6 +902,7 @@ jobs:
     needs: [secrets, secrets-history-audit, workflow-pins, deps]
     outputs:
       evidence: ${{ steps.policy.outputs.evidence }}
+      mode: ${{ steps.policy.outputs.mode }}
     runs-on: ${{ github.event.repository.visibility == 'public' && 'ubuntu-latest' || fromJSON('["self-hosted","gcp-bypass"]') }}
     steps:
       - name: Evaluate immutable SecurityPolicy/v1 and write evidence receipt
@@ -825,6 +910,7 @@ jobs:
         env:
           # See the note on the scanner steps: this workflow's own SHA.
           JOB_WORKFLOW_SHA: ${{ job.workflow_sha }}
+          SCAN_MODE_INPUT: ${{ inputs.mode }}
           SECRETS_RESULT: ${{ needs.secrets.result }}
           HISTORY_RESULT: ${{ needs.secrets-history-audit.result }}
           WORKFLOW_PINS_RESULT: ${{ needs.workflow-pins.result }}
@@ -832,6 +918,7 @@ jobs:
           SECRETS_FINDINGS: ${{ needs.secrets.outputs.findings }}
           WORKFLOW_PINS_FINDINGS: ${{ needs.workflow-pins.outputs.findings }}
           DEPENDENCIES_FINDINGS: ${{ needs.deps.outputs.findings }}
+          DEPENDENCIES_ADVISORIES: ${{ needs.deps.outputs.advisories }}
           SECRETS_COMPLETION: ${{ needs.secrets.outputs.completion }}
           WORKFLOW_PINS_COMPLETION: ${{ needs.workflow-pins.outputs.completion }}
           DEPENDENCIES_COMPLETION: ${{ needs.deps.outputs.completion }}
@@ -881,8 +968,31 @@ jobs:
             expected_history=success
           fi
           test "$HISTORY_RESULT" = "$expected_history"
+          # Enforcement mode. `auto` is advisory on pull_request and enforce
+          # everywhere else; a caller may force either. Any other value fails
+          # closed here instead of silently resolving to advisory. The mode is
+          # applied by the evaluator, which waives only completed dependency
+          # findings; secrets and workflow pins refuse in every mode.
+          case "${SCAN_MODE_INPUT:-auto}" in
+            advisory) SCAN_MODE=advisory ;;
+            enforce) SCAN_MODE=enforce ;;
+            auto)
+              if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+                SCAN_MODE=advisory
+              else
+                SCAN_MODE=enforce
+              fi
+              ;;
+            *)
+              echo "::error::security-scan mode input must be auto, advisory, or enforce; got '${SCAN_MODE_INPUT}'"
+              exit 1
+              ;;
+          esac
+          echo "mode=$SCAN_MODE" >> "$GITHUB_OUTPUT"
+          echo "SecurityPolicy/v1 enforcement mode: $SCAN_MODE (input '${SCAN_MODE_INPUT:-auto}', event $GITHUB_EVENT_NAME)"
           RECEIPT="$RUNNER_TEMP/security-evidence-v1.json"
           echo "receipt=$RECEIPT" >> "$GITHUB_OUTPUT"
+          set +e
           python3 "$POLICY_DIR/security_policy.py" \
             --policy "$POLICY_DIR/security-policy-v1.json" \
             --policy-sha256 "$SECURITY_POLICY_SHA256" \
@@ -894,8 +1004,16 @@ jobs:
             --results "{\"secrets\":\"$SECRETS_RESULT\",\"dependencies\":\"$DEPENDENCIES_RESULT\",\"workflow_pins\":\"$WORKFLOW_PINS_RESULT\"}" \
             --findings "{\"secrets\":${SECRETS_FINDINGS:-null},\"dependencies\":${DEPENDENCIES_FINDINGS:-null},\"workflow_pins\":${WORKFLOW_PINS_FINDINGS:-null}}" \
             --completions "{\"secrets\":${SECRETS_COMPLETION:-null},\"dependencies\":${DEPENDENCIES_COMPLETION:-null},\"workflow_pins\":${WORKFLOW_PINS_COMPLETION:-null}}" \
+            --advisories "{\"dependencies\":${DEPENDENCIES_ADVISORIES:-null}}" \
+            --mode "$SCAN_MODE" \
             --output "$RECEIPT"
-          POLICY_OUTPUT="$(RECEIPT="$RECEIPT" python3 - <<'PY'
+          policy_status=$?
+          set -e
+          # The receipt exists whenever evaluation completed, pass or fail.
+          # Publish it either way: a refused or advisory receipt is evidence,
+          # and every consumer checks `verdict` rather than presence.
+          if [ -f "$RECEIPT" ]; then
+            POLICY_OUTPUT="$(RECEIPT="$RECEIPT" python3 - <<'PY'
           import json
           import os
           receipt = json.load(open(os.environ["RECEIPT"], encoding="utf-8"))
@@ -903,8 +1021,38 @@ jobs:
               print(f"{name}={receipt[name]}")
           PY
           )"
-          printf '%s\n' "$POLICY_OUTPUT" >> "$GITHUB_OUTPUT"
-          echo "evidence=$(base64 < "$RECEIPT" | tr -d '\n')" >> "$GITHUB_OUTPUT"
+            printf '%s\n' "$POLICY_OUTPUT" >> "$GITHUB_OUTPUT"
+            echo "evidence=$(base64 < "$RECEIPT" | tr -d '\n')" >> "$GITHUB_OUTPUT"
+            RECEIPT="$RECEIPT" python3 - <<'PY'
+          import json
+          import os
+          receipt = json.load(open(os.environ["RECEIPT"], encoding="utf-8"))
+          event = os.environ["GITHUB_EVENT_NAME"]
+          advisory = receipt.get("advisory", [])
+          refused = [entry for entry in receipt["blocking"] if entry not in advisory]
+          lines = [
+              f"## SecurityPolicy/v1 — mode `{receipt['mode']}` on `{event}` — verdict **{receipt['verdict']}**",
+              "",
+          ]
+          if refused:
+              lines.append("Refused (blocking in every mode):")
+              lines.extend(f"- {entry}" for entry in refused)
+              lines.append("")
+          if advisory:
+              lines.append(f"**ADVISORY on {event}: would have FAILED** in enforce mode. Not enforced on this event:")
+              lines.extend(f"- {entry}" for entry in advisory)
+              lines.append("")
+              lines.append("Mode resolves to `enforce` on push/schedule/workflow_dispatch, so this fails the production path until fixed.")
+              print(
+                  f"::warning::ADVISORY on {event}: SecurityPolicy/v1 verdict is fail and would have FAILED "
+                  f"in enforce mode ({len(advisory)} dependency refusal(s) not enforced). "
+                  "See the job summary and the security-evidence-v1 artifact."
+              )
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
+              summary.write("\n".join(lines) + "\n")
+          PY
+          fi
+          exit "$policy_status"
 
       - name: Upload SecurityPolicy/v1 machine-readable evidence
         if: ${{ always() && steps.policy.outputs.receipt != '' }}
