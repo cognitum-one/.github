@@ -126,6 +126,16 @@ class WorkflowGrammarTests(unittest.TestCase):
             self.assertIn(fragment, enforcement)
         self.assertLess(enforcement.index("::warning::ADVISORY"), enforcement.index('exit "$policy_status"'))
 
+    def test_dependency_findings_are_classified_by_the_same_verified_gate(self) -> None:
+        deps = self.source.split("  deps:\n", 1)[1].split("\n  enforcement:\n", 1)[0]
+        classify = '--repository-root "$GITHUB_WORKSPACE" --osv-gate "$POLICY_DIR/osv_gate.py")"'
+        self.assertEqual(deps.count(classify), 1)
+        normalize_step = deps.split("- name: Normalize dependency findings before enforcing", 1)[1]
+        normalize_step = normalize_step.split("- name: Enforce OSV dependency policy", 1)[0]
+        for name in ("RECEIPT", "INVENTORY", "NONCE", "IMAGE_NAME", "IMAGE_ID"):
+            self.assertIn(f"OSV_RUNTIME_{name}: ${{{{ steps.runtime.outputs.{name.lower()} }}}}", normalize_step)
+        self.assertLess(deps.index("--osv-gate"), deps.index('python3 "$POLICY_DIR/osv_gate.py"'))
+
     def test_history_secrets_and_workflow_pin_jobs_have_no_mode_branch(self) -> None:
         for job in ("  secrets:\n", "  workflow-pins:\n", "  deps:\n"):
             start = self.source.index(job)

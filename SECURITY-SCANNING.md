@@ -147,6 +147,21 @@ implements that; job names and status contexts are unchanged.
 | `enforce` | `enforce` | fail the job on every event | fail the job |
 | anything else | refused | the `enforcement` job fails before evaluating | fail the job |
 
+**What a `dependencies` finding is (2026-09-10).** The `deps` job normalizes
+its findings with `security_findings.py --osv-gate`, which imports the same
+hash-verified `osv_gate.py` the next step enforces with and keeps only the rows
+that gate would block on: fixable High/Critical, fixable-but-unrated, minus the
+reviewed React Router correction. Before this, every advisory in the
+`--all-vulns` report became a finding, so an unregistered repository on the
+all-`enforce` `strict` profile was refused for a Moderate or unfixable advisory
+that the producer itself had just passed. That is the shape of
+cognitum-one/.github#98 (console), #99 (api) and #100 (meta-llm): two OSV
+database updates on 2026-09-08 turned a green `main` red with no repository
+change. `strict` now refuses on what the producer enforces; a ratchet baseline
+still matches by the same finding IDs, so the Website baseline keeps working
+and can only get shorter. Registration and per-repository baselines remain the
+way to admit a genuine fixable High/Critical for a bounded time.
+
 The mode is applied by `security/security_policy.py` after the verdict is
 computed, so an advisory receipt still carries `"verdict": "fail"` and the full
 `blocking` list; only the process exit differs. A waiver must match the

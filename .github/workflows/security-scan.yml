@@ -21,7 +21,12 @@ name: security-scan
 # reproducible. Fleet-audit callers must not name their job `security`; the
 # stable product `security / enforcement` context is repository-local.
 # OSV policy: every High/Critical vulnerability with a fix blocks. Candidate
-#   lockfile `dev` flags are not trusted to downgrade findings. A repository with
+#   lockfile `dev` flags are not trusted to downgrade findings. The `dependencies`
+#   findings handed to SecurityPolicy/v1 are exactly the gate's blocking rows
+#   (fixable High/Critical, fixable-but-unrated, minus the reviewed router
+#   correction), so an `enforce` or `ratchet` profile refuses on what the
+#   producer enforces and not on every Moderate or unfixable advisory
+#   (cognitum-one/.github#98, #99, #100). A repository with
 #   no dependency manifests at all PASSES: osv-scanner exits 128 with "No package
 #   sources found", and the wrapper accepts that only when both invocations agree
 #   and no report was produced. Any other non-zero status still fails closed.
@@ -108,7 +113,7 @@ env:
   SECURITY_POLICY_SHA256: "d33b87d04f754f932f9c6eb35f34b85acd1299341d90f21dfff80af371003838"
   SECURITY_POLICY_SCRIPT_SHA256: "c14e85deab4c4f63b00335c07b25b5fc788edd64d68c12d625bf59d6856eeea5"
   SECURITY_POLICY_TEST_SHA256: "d29fd0d1fa0c36ad34e151f9bf1d3fb690624d1110747b9eb59ba035652bbebe"
-  SECURITY_FINDINGS_SHA256: "37b5ced713f078f7a97a4cf9fdbc3adf7725d7958b0c1b3298a5aa64696ce47a"
+  SECURITY_FINDINGS_SHA256: "1d1f65c70cea51fd4e7db26a3f9590145fe9c296421322b52178d836243cfea6"
   SECURITY_WORKFLOW_FINDINGS_SHA256: "6069d449f1fb848c34ed4d84f5cd21f3616acb68156058a1bea0e2951abc76ba"
 
 jobs:
@@ -762,6 +767,11 @@ jobs:
           # arrive through `env:` as a context expression: it is not exported as
           # a shell variable, and there is no GITHUB_JOB_WORKFLOW_SHA.
           JOB_WORKFLOW_SHA: ${{ job.workflow_sha }}
+          OSV_RUNTIME_RECEIPT: ${{ steps.runtime.outputs.receipt }}
+          OSV_RUNTIME_INVENTORY: ${{ steps.runtime.outputs.inventory }}
+          OSV_RUNTIME_NONCE: ${{ steps.runtime.outputs.nonce }}
+          OSV_RUNTIME_IMAGE_NAME: ${{ steps.runtime.outputs.image_name }}
+          OSV_RUNTIME_IMAGE_ID: ${{ steps.runtime.outputs.image_id }}
         run: |
           set -euo pipefail
           # Provenance: the immutable SHA of THIS reusable workflow.
@@ -787,7 +797,12 @@ jobs:
           curl --proto '=https' --tlsv1.2 -fsSLo "$FINDINGS_TOOL" \
             "https://raw.githubusercontent.com/cognitum-one/.github/${POLICY_COMMIT}/security/security_findings.py"
           echo "${SECURITY_FINDINGS_SHA256}  ${FINDINGS_TOOL}" | sha256sum -c -
-          FINDINGS="$(python3 "$FINDINGS_TOOL" --control dependencies --report "$RUNNER_TEMP/osv-report.json" --repository-root "$GITHUB_WORKSPACE")"
+          # Classify with the SAME hash-verified gate the next step enforces
+          # with, so the findings SecurityPolicy/v1 sees are its blocking rows
+          # and nothing else. The runtime-receipt tuple is passed through the
+          # step env so the router correction is admitted on identical terms.
+          POLICY_DIR="$RUNNER_TEMP/osv-policy"
+          FINDINGS="$(python3 "$FINDINGS_TOOL" --control dependencies --report "$RUNNER_TEMP/osv-report.json" --repository-root "$GITHUB_WORKSPACE" --osv-gate "$POLICY_DIR/osv_gate.py")"
           echo "json=$FINDINGS" >> "$GITHUB_OUTPUT"
           COMPLETION="$(FINDINGS="$FINDINGS" CONTROL=dependencies POLICY_COMMIT="$POLICY_COMMIT" python3 - <<'PY'
           import json
