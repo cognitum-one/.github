@@ -211,6 +211,7 @@ def evaluate(
     today: dt.date,
     release_rerun: bool = False,
     release_candidate_sha: str | None = None,
+    advisories: dict[str, list[str] | None] | None = None,
 ) -> dict[str, Any]:
     if not SHA_RE.fullmatch(source_sha) or not SHA_RE.fullmatch(workflow_sha):
         raise PolicyError("source/workflow SHA must be a full SHA")
@@ -223,6 +224,27 @@ def evaluate(
         raise PolicyError("findings are missing a security subcheck or name an unknown control")
     if set(completions) != set(policy["controls"]):
         raise PolicyError("completion evidence is missing a security subcheck or name an unknown control")
+    # Evidence only. `advisories` is every advisory a producer observed for a
+    # control (for dependencies: the whole --all-vulns report), while
+    # `findings` is the subset the producer's own gate blocks on and the only
+    # set a control mode ever counts. Recording both keeps a Moderate or
+    # unfixable advisory visible in the receipt without letting it decide the
+    # verdict. A finding that is not among its control's advisories is an
+    # integrity fault, never a pass.
+    if advisories is None:
+        advisories = {}
+    if not isinstance(advisories, dict) or not set(advisories) <= set(policy["controls"]):
+        raise PolicyError("advisory evidence names an unknown control")
+    receipt_advisories: dict[str, list[str]] = {}
+    for control in policy["controls"]:
+        observed_advisories = advisories.get(control)
+        if observed_advisories is None:
+            observed_advisories = []
+        if not isinstance(observed_advisories, list) or not all(
+            isinstance(item, str) and item for item in observed_advisories
+        ):
+            raise PolicyError(f"advisory evidence for {control} is invalid")
+        receipt_advisories[control] = sorted(set(observed_advisories))
     baselines = _active_baselines(policy, repository_id, today)
     exceptions: list[dict[str, Any]] = []
     blocking: list[str] = []
@@ -247,6 +269,8 @@ def evaluate(
         }:
             raise PolicyError(f"completion evidence for {control} is missing, malformed, or wrong-producer")
         receipt_findings[control] = sorted(set(observed))
+        if receipt_advisories[control] and not set(observed) <= set(receipt_advisories[control]):
+            raise PolicyError(f"findings for {control} are not among its observed advisories")
         baseline_findings = baselines.get(control, {})
         matched = sorted(set(observed) & set(baseline_findings))
         baseline_matches[control] = matched
@@ -289,6 +313,7 @@ def evaluate(
         "controls": modes,
         "results": results,
         "findings": receipt_findings,
+        "advisories": receipt_advisories,
         "completions": completions,
         "baseline_matches": baseline_matches,
         "exceptions": exceptions,
@@ -353,18 +378,26 @@ def main() -> None:
     parser.add_argument("--release-rerun", action="store_true")
     parser.add_argument("--release-candidate-sha")
     parser.add_argument("--mode", choices=ENFORCEMENT_MODES, default="enforce")
+    parser.add_argument(
+        "--advisories", default="{}",
+        help="JSON object of every observed advisory per control; evidence only, never counted",
+    )
     args = parser.parse_args()
     policy = load_policy(args.policy, args.policy_sha256)
     results = _strict_json(args.results)
     findings = _strict_json(args.findings)
     completions = _strict_json(args.completions)
+    advisories = _strict_json(args.advisories)
     if not isinstance(results, dict) or not isinstance(findings, dict) or not isinstance(completions, dict):
         raise PolicyError("results, findings, and completions must be JSON objects")
+    if not isinstance(advisories, dict):
+        raise PolicyError("advisories must be a JSON object")
     receipt = evaluate(
         policy=policy, repository_id=args.repository_id, repository=args.repository,
         source_sha=args.source_sha, workflow_sha=args.workflow_sha, producer=args.producer,
         results=results, findings=findings, completions=completions, today=dt.date.today(),
         release_rerun=args.release_rerun, release_candidate_sha=args.release_candidate_sha,
+        advisories=advisories,
     )
     receipt = apply_enforcement_mode(receipt, args.mode)
     args.output.write_text(json.dumps(receipt, sort_keys=True, indent=2) + "\n", encoding="utf-8")

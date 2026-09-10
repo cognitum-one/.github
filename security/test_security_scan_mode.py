@@ -17,6 +17,7 @@ Three things are pinned here:
 from __future__ import annotations
 
 import hashlib
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -135,6 +136,13 @@ class WorkflowGrammarTests(unittest.TestCase):
         for name in ("RECEIPT", "INVENTORY", "NONCE", "IMAGE_NAME", "IMAGE_ID"):
             self.assertIn(f"OSV_RUNTIME_{name}: ${{{{ steps.runtime.outputs.{name.lower()} }}}}", normalize_step)
         self.assertLess(deps.index("--osv-gate"), deps.index('python3 "$POLICY_DIR/osv_gate.py"'))
+        # Every advisory reaches the receipt as evidence; only the gate's rows count.
+        self.assertIn('echo "advisories=$ADVISORIES" >> "$GITHUB_OUTPUT"', normalize_step)
+        self.assertIn("advisories: ${{ steps.findings.outputs.advisories }}", deps)
+        self.assertIn("::warning::{len(rows)} dependency advisory(ies) are informational", normalize_step)
+        enforcement = self.source.split("\n  enforcement:\n", 1)[1]
+        self.assertIn("DEPENDENCIES_ADVISORIES: ${{ needs.deps.outputs.advisories }}", enforcement)
+        self.assertIn('--advisories "{\\"dependencies\\":${DEPENDENCIES_ADVISORIES:-null}}"', enforcement)
 
     def test_history_secrets_and_workflow_pin_jobs_have_no_mode_branch(self) -> None:
         for job in ("  secrets:\n", "  workflow-pins:\n", "  deps:\n"):
@@ -146,6 +154,19 @@ class WorkflowGrammarTests(unittest.TestCase):
 
 
 class PolicyDigestPinTests(unittest.TestCase):
+    def test_enforcement_self_test_imports_only_what_the_job_fetches(self) -> None:
+        # The enforcement job downloads exactly four files beside the self-test
+        # and then runs it. A local import of anything else (osv_gate, say)
+        # raises ModuleNotFoundError there and fails EVERY enforcement job,
+        # while passing locally where the whole directory is present. Caught
+        # by a dry run of the extracted step on 2026-09-10; pinned here.
+        fetched = {"security_policy", "security_findings"}
+        source = (ROOT / "security/test_security_policy.py").read_text(encoding="utf-8")
+        local_modules = {name for name in os.listdir(ROOT / "security") if name.endswith(".py")}
+        local_modules = {name[:-3] for name in local_modules}
+        imported = set(re.findall(r"(?m)^(?:from|import)\s+([A-Za-z_][A-Za-z0-9_]*)", source))
+        self.assertEqual(imported & local_modules, fetched)
+
     def test_embedded_policy_digests_match_the_committed_bytes(self) -> None:
         source = WORKFLOW.read_text(encoding="utf-8")
         for variable, filename in HASH_PINS.items():

@@ -361,6 +361,27 @@ class SecurityPolicyTests(unittest.TestCase):
         tampered = dict(receipt, blocking=["dependencies has finding(s): dependencies:other"])
         self.assertEqual(advisory_waivable(tampered), [])
 
+    # --- advisories are evidence, findings are what counts -----------------
+
+    def test_advisories_are_recorded_but_never_counted(self) -> None:
+        data = dict(self.good, repository_id="9999999999", repository="example/unregistered")
+        receipt = evaluate(**data, advisories={"dependencies": ["dependencies:mod", "dependencies:nofix"]})
+        self.assertEqual(receipt["verdict"], "pass")
+        self.assertEqual(receipt["advisories"]["dependencies"], ["dependencies:mod", "dependencies:nofix"])
+        self.assertEqual(receipt["findings"]["dependencies"], [])
+        receipt = evaluate(**self._dependency_finding(), advisories={"dependencies": ["dependencies:new", "dependencies:mod"]})
+        self.assertEqual(receipt["verdict"], "fail")
+        self.assertEqual(receipt["blocking"], ["dependencies has finding(s): dependencies:new"])
+        # A counted finding that the producer never observed is an integrity fault.
+        with self.assertRaisesRegex(PolicyError, "not among its observed advisories"):
+            evaluate(**self._dependency_finding(), advisories={"dependencies": ["dependencies:other"]})
+        for bad in ({"unknown": []}, {"dependencies": "x"}, {"dependencies": [""]}, {"dependencies": [1]}):
+            with self.subTest(bad=bad), self.assertRaisesRegex(PolicyError, "advisory evidence"):
+                evaluate(**self.good, advisories=bad)
+        # Omitted or null advisories (a failed producer) degrade to empty evidence.
+        self.assertEqual(evaluate(**self.good, advisories={"dependencies": None})["advisories"]["dependencies"], [])
+        self.assertEqual(evaluate(**self.good)["advisories"], {"secrets": [], "dependencies": [], "workflow_pins": []})
+
     def _run_cli(self, mode: str, findings: dict[str, list[str]], tmp: Path) -> subprocess.CompletedProcess[str]:
         completions = self._completions(findings)
         output = tmp / f"receipt-{mode}-{len(''.join(sum(findings.values(), [])))}.json"

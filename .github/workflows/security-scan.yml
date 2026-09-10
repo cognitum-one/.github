@@ -111,8 +111,8 @@ env:
   ENFORCEMENT_GATE_SHA256: "09f8ef9671bd420cca2d6a09ca4d0cb642f1920dc46ab237e738480c047cffac"
   ENFORCEMENT_GATE_TEST_SHA256: "d9b3a0dc351c58f22c567a6b8042997f1242ad8c9c6d9af739afaf3e832b6ab1"
   SECURITY_POLICY_SHA256: "d33b87d04f754f932f9c6eb35f34b85acd1299341d90f21dfff80af371003838"
-  SECURITY_POLICY_SCRIPT_SHA256: "c14e85deab4c4f63b00335c07b25b5fc788edd64d68c12d625bf59d6856eeea5"
-  SECURITY_POLICY_TEST_SHA256: "d29fd0d1fa0c36ad34e151f9bf1d3fb690624d1110747b9eb59ba035652bbebe"
+  SECURITY_POLICY_SCRIPT_SHA256: "176105523b9d5157116e16b8611a422c49f012c7d6d4d6c0a715aecaa0aec431"
+  SECURITY_POLICY_TEST_SHA256: "c62c18dbace86f3ce421b4b3c753dd6c0eb0a65602532e95f408badeca77f159"
   SECURITY_FINDINGS_SHA256: "1d1f65c70cea51fd4e7db26a3f9590145fe9c296421322b52178d836243cfea6"
   SECURITY_WORKFLOW_FINDINGS_SHA256: "6069d449f1fb848c34ed4d84f5cd21f3616acb68156058a1bea0e2951abc76ba"
 
@@ -401,6 +401,7 @@ jobs:
     runs-on: ${{ github.event.repository.visibility == 'public' && 'ubuntu-latest' || fromJSON('["self-hosted","gcp-bypass"]') }}
     outputs:
       findings: ${{ steps.findings.outputs.json }}
+      advisories: ${{ steps.findings.outputs.advisories }}
       completion: ${{ steps.findings.outputs.completion }}
     timeout-minutes: 60
     steps:
@@ -804,6 +805,46 @@ jobs:
           POLICY_DIR="$RUNNER_TEMP/osv-policy"
           FINDINGS="$(python3 "$FINDINGS_TOOL" --control dependencies --report "$RUNNER_TEMP/osv-report.json" --repository-root "$GITHUB_WORKSPACE" --osv-gate "$POLICY_DIR/osv_gate.py")"
           echo "json=$FINDINGS" >> "$GITHUB_OUTPUT"
+          # Every advisory in the report, counted or not, travels to the
+          # receipt as evidence; only the gate's rows above count. The rows
+          # the gate does not block on are surfaced here as warnings so a
+          # Moderate or unfixable advisory stays visible without failing.
+          ADVISORIES="$(python3 "$FINDINGS_TOOL" --control dependencies --report "$RUNNER_TEMP/osv-report.json" --repository-root "$GITHUB_WORKSPACE")"
+          echo "advisories=$ADVISORIES" >> "$GITHUB_OUTPUT"
+          FINDINGS="$FINDINGS" ADVISORIES="$ADVISORIES" FINDINGS_TOOL="$FINDINGS_TOOL" \
+          OSV_REPORT="$RUNNER_TEMP/osv-report.json" python3 - <<'PY'
+          import importlib.util
+          import json
+          import os
+          from pathlib import Path
+          spec = importlib.util.spec_from_file_location("security_findings", os.environ["FINDINGS_TOOL"])
+          findings_tool = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(findings_tool)
+          counted = set(json.loads(os.environ["FINDINGS"]))
+          observed = set(json.loads(os.environ["ADVISORIES"]))
+          if not counted <= observed:
+              raise SystemExit("gate-classified findings are not a subset of the observed advisories")
+          informational = observed - counted
+          if not informational:
+              raise SystemExit(0)
+          root = Path(os.environ["GITHUB_WORKSPACE"])
+          report = json.loads(Path(os.environ["OSV_REPORT"]).read_text(encoding="utf-8"))
+          rows = []
+          for result in report["results"]:
+              source = findings_tool._dependency_source_path(result["source"]["path"], root)
+              for package in result["packages"]:
+                  name, version = package["package"]["name"], package["package"]["version"]
+                  for vulnerability in package["vulnerabilities"]:
+                      advisory = vulnerability["id"]
+                      if findings_tool._identifier("dependencies", [source, name, version, advisory]) in informational:
+                          rows.append(f"{name}@{version} {advisory} ({source})")
+          rows = sorted(set(rows))
+          print(f"::warning::{len(rows)} dependency advisory(ies) are informational (below High, or no fixed release): recorded in the receipt, not counted by SecurityPolicy/v1.")
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
+              summary.write(f"## Informational dependency advisories — {len(rows)} not counted\n\n")
+              summary.write("Below High/Critical or without a fixed release. Recorded in `security-evidence-v1` under `advisories`; `findings` holds only the gate's blocking rows.\n\n")
+              summary.write("\n".join(f"- `{row}`" for row in rows[:100]) + "\n")
+          PY
           COMPLETION="$(FINDINGS="$FINDINGS" CONTROL=dependencies POLICY_COMMIT="$POLICY_COMMIT" python3 - <<'PY'
           import json
           import os
@@ -877,6 +918,7 @@ jobs:
           SECRETS_FINDINGS: ${{ needs.secrets.outputs.findings }}
           WORKFLOW_PINS_FINDINGS: ${{ needs.workflow-pins.outputs.findings }}
           DEPENDENCIES_FINDINGS: ${{ needs.deps.outputs.findings }}
+          DEPENDENCIES_ADVISORIES: ${{ needs.deps.outputs.advisories }}
           SECRETS_COMPLETION: ${{ needs.secrets.outputs.completion }}
           WORKFLOW_PINS_COMPLETION: ${{ needs.workflow-pins.outputs.completion }}
           DEPENDENCIES_COMPLETION: ${{ needs.deps.outputs.completion }}
@@ -962,6 +1004,7 @@ jobs:
             --results "{\"secrets\":\"$SECRETS_RESULT\",\"dependencies\":\"$DEPENDENCIES_RESULT\",\"workflow_pins\":\"$WORKFLOW_PINS_RESULT\"}" \
             --findings "{\"secrets\":${SECRETS_FINDINGS:-null},\"dependencies\":${DEPENDENCIES_FINDINGS:-null},\"workflow_pins\":${WORKFLOW_PINS_FINDINGS:-null}}" \
             --completions "{\"secrets\":${SECRETS_COMPLETION:-null},\"dependencies\":${DEPENDENCIES_COMPLETION:-null},\"workflow_pins\":${WORKFLOW_PINS_COMPLETION:-null}}" \
+            --advisories "{\"dependencies\":${DEPENDENCIES_ADVISORIES:-null}}" \
             --mode "$SCAN_MODE" \
             --output "$RECEIPT"
           policy_status=$?

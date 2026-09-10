@@ -122,8 +122,9 @@ or package version normalizes to a distinct finding ID and fails the ratchet.
 Every evaluated run uploads `security-evidence-v1.json` as the
 `security-evidence-v1` artifact. It records the policy revision, immutable
 repository ID, source and workflow SHA, producer, per-control results and
-findings, baseline matches, exceptions/expiry, verdict, the enforcement `mode`
-the run resolved to, and the `advisory` list of refusals that mode left
+findings, every observed `advisories` entry (evidence only; findings are the
+subset that counts), baseline matches, exceptions/expiry, verdict, the
+enforcement `mode` the run resolved to, and the `advisory` list of refusals that mode left
 unenforced (always empty in `enforce` mode). It is evidence for that exact run,
 not permission to alter rulesets or deploy production.
 
@@ -159,7 +160,10 @@ cognitum-one/.github#98 (console), #99 (api) and #100 (meta-llm): two OSV
 database updates on 2026-09-08 turned a green `main` red with no repository
 change. `strict` now refuses on what the producer enforces; a ratchet baseline
 still matches by the same finding IDs, so the Website baseline keeps working
-and can only get shorter. Registration and per-repository baselines remain the
+and can only get shorter. Every advisory in the report still reaches the
+receipt under `advisories` (evidence), the uncounted ones are listed as a
+`::warning::` and a job-summary section on the `deps` job, and a counted
+finding that is not among the observed advisories is an integrity fault. Registration and per-repository baselines remain the
 way to admit a genuine fixable High/Critical for a bounded time.
 
 The mode is applied by `security/security_policy.py` after the verdict is
