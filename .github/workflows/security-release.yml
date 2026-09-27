@@ -36,7 +36,7 @@ jobs:
     name: release exact-candidate security proof
     if: ${{ always() }}
     needs: [security]
-    runs-on: ${{ github.event.repository.visibility == 'public' && 'ubuntu-latest' || fromJSON('["self-hosted","gcp-bypass"]') }}
+    runs-on: ubuntu-latest
     env:
       CANDIDATE_SHA: ${{ inputs.candidate_sha }}
       SECURITY_RESULT: ${{ needs.security.result }}

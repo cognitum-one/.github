@@ -21,17 +21,22 @@ rulesets, authorize a merge, or unblock a deployment. The versioned contract is
 this template from regaining product `push`/`pull_request` triggers or the
 protected product security context.
 
-## Where it runs, and why that changed (2026-08-20)
+## Where it runs (2026-09-27; previously 2026-08-20)
 
-Private-repository jobs use `[self-hosted, gcp-bypass]`; public callers use
-GitHub-hosted runners because the private runner group rejects public
-repositories. The private jobs used
-`ubuntu-latest` / `ubuntu-24.04` until the org-wide Actions billing stop, under
-which **no hosted job can start at all** — every `security` run in the
+Every job runs on GitHub-hosted `ubuntu-latest`, for public and private callers
+alike. The scan holds no cloud credentials, and the shared self-hosted
+`[self-hosted, gcp-bypass]` pool is reserved for deploy jobs (owner decision
+2026-09-27): with 12 slots serving every repository's CI and CD, jobs queued
+there for up to 13 minutes, while hosted jobs started in seconds.
+
+From 2026-08-20 (#76) until then, private-repository jobs ran on
+`[self-hosted, gcp-bypass]` as a TEMP measure: under the org-wide Actions
+billing stop **no hosted job could start at all** — every `security` run in the
 organization failed in about four seconds without scanning anything. That is
 worth stating precisely because it does not look like an outage: the check goes
 red instantly and reads like a finding, and a repository whose scan never ran is
-indistinguishable from one that passed unless you look at the annotation.
+indistinguishable from one that passed unless you look at the annotation. If
+hosted runs start failing in seconds again, check Actions billing first.
 
 Two historical constraints still apply to optional audits:
 
