@@ -117,21 +117,18 @@ env:
   SECURITY_WORKFLOW_FINDINGS_SHA256: "6069d449f1fb848c34ed4d84f5cd21f3616acb68156058a1bea0e2951abc76ba"
 
 jobs:
-  # runs-on below: the gcp-bypass fleet exists to keep PRIVATE repos scanning
-  # after the Actions billing stop (public repos were never metered, so they
-  # never needed it). Every runner group in the org has
-  # allows_public_repositories=false by design (cognitum-one/.github#83) --
-  # routing a public caller (cogs, sdks) at the fleet is not a config knob,
-  # it is a job GitHub refuses to schedule, and it fails silently: no runner
-  # ever claims it, so the job sits queued until GitHub times it out cold,
-  # with no error pointing at the cause. Public callers get GitHub-hosted
-  # instead; private callers keep the fleet.
+  # runs-on: GitHub-hosted for every caller (owner decision 2026-09-27). The
+  # scan holds no cloud credentials, so it does not belong on the shared
+  # self-hosted gcp-bypass pool, which is now reserved for deploy jobs. This
+  # reverses the TEMP hosted-minutes-stop move of 2026-08-20
+  # (cognitum-one/.github#76). The workspace purge steps below are kept: they
+  # are a no-op on a fresh hosted VM and still correct on any reused workspace.
   secrets:
     name: secret scan (current files)
     outputs:
       findings: ${{ steps.findings.outputs.json }}
       completion: ${{ steps.findings.outputs.completion }}
-    runs-on: ${{ github.event.repository.visibility == 'public' && 'ubuntu-latest' || fromJSON('["self-hosted","gcp-bypass"]') }}
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
@@ -244,7 +241,7 @@ jobs:
     name: secret scan (full history audit)
     # Findings are informational; scanner integrity/execution failures block.
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-    runs-on: ${{ github.event.repository.visibility == 'public' && 'ubuntu-latest' || fromJSON('["self-hosted","gcp-bypass"]') }}
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
@@ -321,7 +318,7 @@ jobs:
     outputs:
       findings: ${{ steps.findings.outputs.json }}
       completion: ${{ steps.findings.outputs.completion }}
-    runs-on: ${{ github.event.repository.visibility == 'public' && 'ubuntu-latest' || fromJSON('["self-hosted","gcp-bypass"]') }}
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
@@ -398,7 +395,7 @@ jobs:
 
   deps:
     name: dependency scan (OSV, fail on High+ fixable)
-    runs-on: ${{ github.event.repository.visibility == 'public' && 'ubuntu-latest' || fromJSON('["self-hosted","gcp-bypass"]') }}
+    runs-on: ubuntu-latest
     outputs:
       findings: ${{ steps.findings.outputs.json }}
       advisories: ${{ steps.findings.outputs.advisories }}
@@ -903,7 +900,7 @@ jobs:
     outputs:
       evidence: ${{ steps.policy.outputs.evidence }}
       mode: ${{ steps.policy.outputs.mode }}
-    runs-on: ${{ github.event.repository.visibility == 'public' && 'ubuntu-latest' || fromJSON('["self-hosted","gcp-bypass"]') }}
+    runs-on: ubuntu-latest
     steps:
       - name: Evaluate immutable SecurityPolicy/v1 and write evidence receipt
         id: policy

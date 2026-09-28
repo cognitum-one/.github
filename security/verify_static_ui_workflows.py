@@ -578,8 +578,7 @@ def _verify_security(source: str) -> None:
         "fetch-depth: 0",
         "persist-credentials: false",
         "deps:\n    name: dependency scan (OSV, fail on High+ fixable)\n"
-        "    runs-on: ${{ github.event.repository.visibility == 'public' "
-        "&& 'ubuntu-latest' || fromJSON('[\"self-hosted\",\"gcp-bypass\"]') }}",
+        "    runs-on: ubuntu-latest",
         "static-ui-runtime-profiles.json",
         "static_ui_runtime_receipt.py",
         "test_static_ui_runtime_receipt.py",
