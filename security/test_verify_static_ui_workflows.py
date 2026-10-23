@@ -23,9 +23,11 @@ from verify_static_ui_workflows import (
     EXPECTED_BUILDX_VERSION,
     EXPECTED_DOCKER_CONFIG,
     EXPECTED_ORG_POLICY,
+    EXPECTED_LOCAL_POLICY_SOURCE,
     POLICY_ARTIFACTS,
     WorkflowPolicyError,
     verify,
+    verify_local_policy_artifacts,
 )
 
 
@@ -416,6 +418,51 @@ class StaticUiWorkflowPolicyTests(unittest.TestCase):
                 with self.assertRaisesRegex(
                     WorkflowPolicyError, "approved organization policy"
                 ):
+                    self._verify(sources)
+
+    def test_local_source_hashes_cover_every_previously_protected_and_new_file(self) -> None:
+        expected = {
+            artifact: EXPECTED_ORG_POLICY[name]
+            for name, artifact in POLICY_ARTIFACTS.items()
+            if name in EXPECTED_ORG_POLICY
+        }
+        expected.update(EXPECTED_LOCAL_POLICY_SOURCE)
+        self.assertEqual(set(EXPECTED_LOCAL_POLICY_SOURCE), {
+            "run_osv_scan.py", "test_run_osv_scan.py",
+            "test_pnpm_document_boundary.py", "pnpm12_public_fixtures.json",
+        })
+        self.assertEqual(len(expected), 10)
+        for filename in expected:
+            (self.directory / filename).write_bytes(
+                (self.root / "security" / filename).read_bytes()
+            )
+        verify_local_policy_artifacts(self.directory)
+        for filename in expected:
+            with self.subTest(artifact=filename):
+                path = self.directory / filename
+                original = path.read_bytes()
+                path.write_bytes(original + b"!")
+                with self.assertRaisesRegex(
+                    WorkflowPolicyError,
+                    "approved local policy source hash differs from " + re.escape(filename),
+                ):
+                    verify_local_policy_artifacts(self.directory)
+                path.write_bytes(original)
+                verify_local_policy_artifacts(self.directory)
+
+    def test_source_publication_cannot_change_activated_workflow_pins_or_hashes(self) -> None:
+        for name in ("OSV_POLICY_COMMIT", "OSV_RUNNER_SHA256", "OSV_RUNNER_TEST_SHA256"):
+            with self.subTest(activated_field=name):
+                approved = EXPECTED_ORG_POLICY[name]
+                replacement = ("1" if approved[0] != "1" else "2") * len(approved)
+                sources = copy.deepcopy(self.sources)
+                changed = []
+                for target in ("security", "release", "revision"):
+                    if approved in sources[target]:
+                        sources[target] = sources[target].replace(approved, replacement, 1)
+                        changed.append(target)
+                self.assertTrue(changed, "the activated pin mutation must not be vacuous")
+                with self.assertRaisesRegex(WorkflowPolicyError, "approved organization policy"):
                     self._verify(sources)
 
     def test_policy_commit_contains_the_exact_hash_verified_artifacts(self) -> None:

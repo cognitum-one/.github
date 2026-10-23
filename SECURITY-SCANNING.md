@@ -537,3 +537,61 @@ The same gitleaks + OSV steps wrap as a `qe-harness` security template, emitting
 an **Ed25519-signed witness manifest** per scan (tamper-evident "repo X clean at
 SHA Y"). `metaharness` mints one worker-harness per repo to fan the scan across
 the whole org in parallel and aggregate into a single signed report.
+
+
+## pnpm YAML document boundary (source publication only)
+
+OSV-Scanner2.2.4 decodes only the first YAML document in a pnpm lock. The public
+fixture in `security/pnpm12_public_fixtures.json` demonstrates a clean manager
+document hiding an application document with vulnerable Vitest/Tinypool. The
+source wrapper now refuses unsupported document streams with its existing
+integrity status2 before executing the scanner or producing a report. The
+existing status0/1 handling, no-source128 contract, scanner flags, severity
+policy and package selection are unchanged. No lockfile or package is excluded.
+
+The guard accepts pnpm's UTF-8 single-document output, including a leading BOM.
+UTF-16 and mid-stream BOMs are conservatively unsupported; this is not a general
+YAML validator or a proof of arbitrary manifest/report completeness. Symlink
+directories are not followed, matching the exact pinned scanner's observed
+selection. Locks reached through separately mounted public outside-root targets
+were ignored through directory links, while direct controls were scanned. A
+regular-file descriptor check rejects symlinks and special files without
+blocking on a FIFO. No unsupported stream may be admitted through advisory
+mode: status2 remains an integrity refusal, not a dependency finding waiver.
+
+**This source change does not roll out the guard.** The reusable workflow still
+fetches its helper from its unchanged immutable `OSV_POLICY_COMMIT`; updating
+helper files on a branch or on main does not change those fetched bytes. The
+existing `test_run_osv_scan.py` entrypoint also executes the new public boundary
+regressions, so source publication is tested without changing any workflow.
+
+The local source-artifact hashes are explicit and separate from the activated
+`EXPECTED_ORG_POLICY` table. Publishing reviewed source therefore does not
+require changing a runtime pin or accepting hash drift. Every previously bound
+local artifact and the two new test/fixture files still has an exact expected
+hash; one-byte mutation tests require refusal for every file. The activated
+commit and workflow hashes remain independently checked against their published
+Git artifacts.
+
+Adoption has three separate stages:
+
+1. Merge reviewed source/tests/public fixtures, then record and verify the
+   actual post-merge, main-reachable helper commit and exact artifact hashes.
+2. In a later reviewed template change, pin that published helper commit,
+   update the runner/test hashes, fetch and hash-check the new test module and
+   public fixture JSON, and retain every existing oracle. Record the actual
+   post-merge workflow commit. No unmerged feature head or bootstrap zero pin
+   is an activation target.
+3. Repository owners adopt that published workflow commit in their optional
+   audit callers. Already SHA-pinned callers retain their old workflow until
+   repinned. Inventory floating callers first: template activation can affect
+   `@main` callers on their next run. Do not turn this reference tooling into
+   a new product delivery gate or change rulesets/approval authority.
+
+Repository merge settings currently permit merge commits and disable squash
+and rebase merges. Recheck those settings before any authorized merge; if they
+change, use the actual resulting post-merge commit, never a feature head that
+squash/rebase could orphan. No merge, caller update or deployment is included
+in source publication. The long-term alternative is an upstream pnpm extractor
+that iterates all YAML documents, followed by a verified scanner release and
+the same coverage fixtures.

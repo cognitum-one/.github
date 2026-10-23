@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 from pathlib import Path
 import stat
 import subprocess
@@ -237,6 +238,55 @@ def _vulnerability_count(payload: dict[str, Any]) -> int:
     return count
 
 
+def _require_single_document_pnpm_lockfiles(root: Path) -> None:
+    """Refuse YAML streams the pinned pnpm extractor only partially decodes.
+
+    This format check is not a general YAML parser. It supports the UTF-8
+    single-document format emitted by pnpm, not arbitrary YAML encodings.
+    """
+    def walk_error(error: OSError) -> None:
+        raise ScanBoundaryError("pnpm lockfile inventory is unreadable") from error
+
+    for directory, _, filenames in os.walk(root, followlinks=False, onerror=walk_error):
+        if "pnpm-lock.yaml" not in filenames:
+            continue
+        lockfile = Path(directory) / "pnpm-lock.yaml"
+        label = repr(lockfile.relative_to(root).as_posix())
+        if lockfile.is_symlink():
+            raise ScanBoundaryError(f"pnpm lockfile must not be a symlink: {label}")
+        try:
+            descriptor = os.open(
+                lockfile,
+                os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0),
+            )
+            with os.fdopen(descriptor, "rb") as stream:
+                if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+                    raise ScanBoundaryError(f"pnpm lockfile must be a regular file: {label}")
+                content = stream.read().decode("utf-8-sig")
+        except (OSError, UnicodeError) as error:
+            raise ScanBoundaryError(f"pnpm lockfile is unreadable: {label}") from error
+        if "\ufeff" in content:
+            raise ScanBoundaryError(f"unsupported mid-stream BOM in pnpm lockfile: {label}")
+        started = ended = False
+        for line in content.splitlines():
+            stripped = line.lstrip(" \t")
+            if not stripped or stripped.startswith("#"):
+                continue
+            if re.match(r"---(?:[ \t]|$)", line):
+                if started or ended:
+                    raise ScanBoundaryError(f"unsupported multi-document pnpm lockfile: {label}")
+                started = True
+            elif re.match(r"\.\.\.(?:[ \t]|$)", line):
+                trailing = line[3:].lstrip(" \t")
+                if ended or (trailing and not trailing.startswith("#")):
+                    raise ScanBoundaryError(f"unsupported pnpm document stream: {label}")
+                ended = True
+            elif ended:
+                raise ScanBoundaryError(f"unsupported content after pnpm document end: {label}")
+            elif not line.startswith("%"):
+                started = True
+
+
 def run_osv_scan(
     *,
     binary: Path,
@@ -263,6 +313,7 @@ def run_osv_scan(
     if len({scanner, policy, machine_report}) != 3:
         raise ScanBoundaryError("scanner, config, and report paths must be distinct")
 
+    _require_single_document_pnpm_lockfiles(root)
     human, machine = build_scan_commands(
         binary=scanner,
         config=policy,
