@@ -43,12 +43,14 @@ EXPECTED_ACTIONS = {
 }
 
 EXPECTED_ORG_POLICY = {
-    "OSV_POLICY_COMMIT": "9a499d0520a5d5e7818baf3e799048d62617a84d",
+    "OSV_POLICY_COMMIT": "7a59fa79e38ddddc75ffd0c628929e61f8f9ba74",
     "OSV_GATE_SHA256": "5e998e705b1b4dc22d6f0c0704de64d50124c0783dbc745c3ce2d919fbe9ab2f",
     "OSV_GATE_TEST_SHA256": "801d2ef72cc1905a34edbf54393a44e2deb88b492374fc35f6ba6d14cb58139c",
     "OSV_CONFIG_SHA256": "5bd10fc47448111e6d8bed4682b9b80e4c420ca6cb0808a252b8c6d8cd920c34",
-    "OSV_RUNNER_SHA256": "f5d4c3e85e673d031bee763d7d516de07af420b727f8cdb9555748de9867e1a3",
-    "OSV_RUNNER_TEST_SHA256": "46b266824f04d4caa84ed9afc1aed0020ef3ce986b7b2b0fd64a8a7f685549d3",
+    "OSV_RUNNER_SHA256": "6669a90eb60730350f2b7d0eb2b2b2de039ffeb006f9f61fe081e42dbfa6b20e",
+    "OSV_RUNNER_TEST_SHA256": "18393746985f82a1d4d2d3d7a8b6dbbb97ca73da142e77f99442511cfa6b3604",
+    "OSV_PNPM_BOUNDARY_TEST_SHA256": "97ef74518093a211fac6849aeb26934f93358dc3e43af58c7369966d3403b59e",
+    "OSV_PNPM_FIXTURE_SHA256": "93b43028a4d417fb90ecff6eaf334d02e17155e7801a21469db743b3970ef08c",
     "STATIC_UI_PROFILES_SHA256": "c1c40fd71dc7943d4ef698aa63d03902c0efe554e8d3566cb628ae6c0913a4da",
     "STATIC_UI_RECEIPT_SHA256": "6333055219e4b3c6a8a561df18774b008ed5afe428dc1d7fcc15fcb705bb0987",
     "STATIC_UI_RECEIPT_TEST_SHA256": "9a92d7076a2b3026c5ad28361783a673b67006b651eb4312a8c9972bd1e91d9d",
@@ -69,6 +71,8 @@ POLICY_ARTIFACTS = {
     "OSV_CONFIG_SHA256": "osv-scanner.toml",
     "OSV_RUNNER_SHA256": "run_osv_scan.py",
     "OSV_RUNNER_TEST_SHA256": "test_run_osv_scan.py",
+    "OSV_PNPM_BOUNDARY_TEST_SHA256": "test_pnpm_document_boundary.py",
+    "OSV_PNPM_FIXTURE_SHA256": "pnpm12_public_fixtures.json",
     "STATIC_UI_PROFILES_SHA256": "static-ui-runtime-profiles.json",
     "STATIC_UI_RECEIPT_SHA256": "static_ui_runtime_receipt.py",
     "STATIC_UI_RECEIPT_TEST_SHA256": "test_static_ui_runtime_receipt.py",
@@ -581,8 +585,31 @@ def _verify_security_app_bridge(source: str) -> None:
     )
 
 
+def _verify_pnpm_boundary_artifacts(source: str, label: str, *, release: bool = False) -> None:
+    tests = 'python3 "$POLICY_DIR/test_run_osv_scan.py"'
+    if release:
+        _require(source, (
+            'base="https://raw.githubusercontent.com/cognitum-one/.github/${OSV_POLICY_COMMIT}/security"',
+        ), label)
+    for variable, filename in (
+        ("OSV_PNPM_BOUNDARY_TEST_SHA256", "test_pnpm_document_boundary.py"),
+        ("OSV_PNPM_FIXTURE_SHA256", "pnpm12_public_fixtures.json"),
+    ):
+        destination = f'curl --proto \'=https\' --tlsv1.2 -fsSLo "$POLICY_DIR/{filename}"'
+        if release:
+            download = destination + f' "$base/{filename}"'
+        else:
+            download = destination + ' \\\n            ' + (
+                '"https://raw.githubusercontent.com/cognitum-one/.github/'
+                '${OSV_POLICY_COMMIT}/security/' + filename + '"'
+            )
+        digest = f'echo "${{{variable}}}  ${{POLICY_DIR}}/{filename}" | sha256sum -c -'
+        _require_order(source, (download, digest, tests), label + " pnpm boundary artifacts")
+
+
 def _verify_security(source: str) -> None:
     _verify_common(source, "security workflow")
+    _verify_pnpm_boundary_artifacts(source, "security workflow")
     _verify_trusted_buildkit(source, "security workflow")
     _verify_security_app_bridge(source)
     required = (
@@ -649,6 +676,7 @@ def _verify_security(source: str) -> None:
 
 def _verify_release(source: str, allow_unresolved_self_pin: bool) -> None:
     _verify_common(source, "release workflow")
+    _verify_pnpm_boundary_artifacts(source, "release workflow", release=True)
     _verify_trusted_buildkit(source, "release workflow")
     # The security scan has required the ephemeral askpass boundary since the App
     # bridge landed, but this workflow was not covered and kept the original

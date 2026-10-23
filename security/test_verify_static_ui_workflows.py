@@ -465,6 +465,52 @@ class StaticUiWorkflowPolicyTests(unittest.TestCase):
                 with self.assertRaisesRegex(WorkflowPolicyError, "approved organization policy"):
                     self._verify(sources)
 
+    def test_pnpm_boundary_downloads_and_hashes_cannot_be_removed_or_repointed(self) -> None:
+        for target in ("security", "release"):
+            for variable, filename in (
+                ("OSV_PNPM_BOUNDARY_TEST_SHA256", "test_pnpm_document_boundary.py"),
+                ("OSV_PNPM_FIXTURE_SHA256", "pnpm12_public_fixtures.json"),
+            ):
+                source = self.sources[target]
+                destination = f'curl --proto \'=https\' --tlsv1.2 -fsSLo "$POLICY_DIR/{filename}"'
+                if target == "release":
+                    download = destination + f' "$base/{filename}"'
+                else:
+                    download = destination + ' \\\n            ' + (
+                        '"https://raw.githubusercontent.com/cognitum-one/.github/'
+                        '${OSV_POLICY_COMMIT}/security/' + filename + '"'
+                    )
+                digest = f'echo "${{{variable}}}  ${{POLICY_DIR}}/{filename}" | sha256sum -c -'
+                tests = 'python3 "$POLICY_DIR/test_run_osv_scan.py"'
+                self.assertEqual(source.count(download), 1)
+                self.assertEqual(source.count(digest), 1)
+                changes = [
+                    ("missing download", source.replace(download, "# missing pnpm artifact", 1)),
+                    ("wrong origin", source.replace(download, download.replace(
+                        ('"$base/' if target == "release" else '"https://raw.githubusercontent.com/'),
+                        '"https://untrusted.invalid/', 1), 1)),
+                    ("missing hash", source.replace(digest, "# missing pnpm hash", 1)),
+                    ("hash after test", source.replace(digest, "# delayed pnpm hash", 1).replace(
+                        tests, tests + "\n          " + digest, 1)),
+                ]
+                for label, changed in changes:
+                    with self.subTest(target=target, artifact=filename, mutation=label):
+                        self.assertNotEqual(changed, source)
+                        sources = copy.deepcopy(self.sources);sources[target] = changed
+                        with self.assertRaises(WorkflowPolicyError):
+                            self._verify(sources)
+
+    def test_pnpm_boundary_test_dependencies_keep_exact_activated_hashes(self) -> None:
+        for target in ("security", "release"):
+            for name in ("OSV_PNPM_BOUNDARY_TEST_SHA256", "OSV_PNPM_FIXTURE_SHA256"):
+                approved = EXPECTED_ORG_POLICY[name]
+                sources = copy.deepcopy(self.sources)
+                self.assertIn(approved, sources[target])
+                sources[target] = sources[target].replace(approved, "0" * 64, 1)
+                with self.subTest(target=target, activated_field=name):
+                    with self.assertRaisesRegex(WorkflowPolicyError, "approved organization policy"):
+                        self._verify(sources)
+
     def test_policy_commit_contains_the_exact_hash_verified_artifacts(self) -> None:
         policy_commit = EXPECTED_ORG_POLICY["OSV_POLICY_COMMIT"]
         for environment_name, artifact in POLICY_ARTIFACTS.items():
