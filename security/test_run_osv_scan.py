@@ -404,4 +404,6 @@ class RunOsvScanTest(unittest.TestCase):
 
 
 if __name__ == "__main__":
+    # The existing CI entrypoint also runs the public pnpm format regressions.
+    from test_pnpm_document_boundary import PnpmDocumentBoundaryTests
     unittest.main()

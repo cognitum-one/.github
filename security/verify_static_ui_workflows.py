@@ -54,6 +54,15 @@ EXPECTED_ORG_POLICY = {
     "STATIC_UI_RECEIPT_TEST_SHA256": "9a92d7076a2b3026c5ad28361783a673b67006b651eb4312a8c9972bd1e91d9d",
 }
 
+# Candidate/reference source publication is separate from activated artifacts.
+# These reviewed source hashes do not change OSV_POLICY_COMMIT or any caller.
+EXPECTED_LOCAL_POLICY_SOURCE = {
+    "run_osv_scan.py": "6669a90eb60730350f2b7d0eb2b2b2de039ffeb006f9f61fe081e42dbfa6b20e",
+    "test_run_osv_scan.py": "18393746985f82a1d4d2d3d7a8b6dbbb97ca73da142e77f99442511cfa6b3604",
+    "test_pnpm_document_boundary.py": "97ef74518093a211fac6849aeb26934f93358dc3e43af58c7369966d3403b59e",
+    "pnpm12_public_fixtures.json": "93b43028a4d417fb90ecff6eaf334d02e17155e7801a21469db743b3970ef08c"
+}
+
 POLICY_ARTIFACTS = {
     "OSV_GATE_SHA256": "osv_gate.py",
     "OSV_GATE_TEST_SHA256": "test_osv_gate.py",
@@ -73,14 +82,18 @@ class WorkflowPolicyError(ValueError):
 
 
 def verify_local_policy_artifacts(security_directory: Path) -> None:
-    for variable, filename in POLICY_ARTIFACTS.items():
-        if variable not in EXPECTED_ORG_POLICY:
-            continue
+    expected = {
+        filename: EXPECTED_ORG_POLICY[variable]
+        for variable, filename in POLICY_ARTIFACTS.items()
+        if variable in EXPECTED_ORG_POLICY
+    }
+    expected.update(EXPECTED_LOCAL_POLICY_SOURCE)
+    for filename, digest in expected.items():
         artifact = security_directory / filename
         actual = hashlib.sha256(artifact.read_bytes()).hexdigest()
-        if actual != EXPECTED_ORG_POLICY[variable]:
+        if actual != digest:
             raise WorkflowPolicyError(
-                f"approved organization policy hash differs from {filename}"
+                f"approved local policy source hash differs from {filename}"
             )
 
 
