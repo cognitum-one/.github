@@ -389,6 +389,75 @@ the upstream maintainer advisory and OSV data, then either remove the
 correction or land a newly reviewed policy commit, expiry, hashes, and
 adversarial tests. Expiry itself blocks; it never silently extends.
 
+## Reviewed risk acceptance: zod 3 inside Ruflo
+
+`GHSA-mrhx-c7xc-m3w5` (zod memory exhaustion on oversized constrained
+collections) is fixed only in zod `4.6.6`. Unlike the Router correction, the
+advisory is accurate. Console's Ruflo adapter simply cannot take the fix yet.
+Every published Ruflo release still declares zod `^3`. Forcing zod 4 into the
+tree breaks Ruflo at runtime: `@claude-flow/security` calls `z.string().ip()`,
+which zod 4 removed, so importing `@claude-flow/memory` throws and
+`memory_store` fails. Console's image persistence check
+(`verify-durable-state.mjs`) reproduces that break. The fix is an upstream
+Ruflo migration to zod 4.
+
+Until then, the gate accepts the finding only when all of these hold:
+
+- the repository is `cognitum-one/console` and the canonical lock is
+  `services/runtime-adapters/ruflo/package-lock.json`, read without following
+  a symlink, and with duplicate JSON keys rejected;
+- the finding is exactly package `zod`, version `3.25.76` and
+  `GHSA-mrhx-c7xc-m3w5`;
+- every package path in the lock has the shape
+  `node_modules/<name>(/node_modules/<name>)*`, where each name segment (or
+  each part of an `@scope/name` pair) is ASCII letters, digits and `.`, `_`,
+  `~` or `-`, and does not start with `.` or `_`. Trailing slashes, `.` and
+  `..` segments, workspace directories and non-ASCII look-alikes block. A
+  local workspace package in the adapter lock therefore ends the exception, a
+  deliberate limit while it is in force;
+- no entry carries zod's name, any zod registry tarball URL or the reviewed
+  digest (anywhere in its integrity string) under any path other than
+  `.../node_modules/zod`;
+- every `.../node_modules/zod` entry is a plain registry install: not a link
+  or bundled, a `name` field, if present (even `null`), is `zod`, `resolved` is the registry tarball
+  for its own `version`, and `integrity` is exactly one `sha512-` digest. The
+  reviewed `3.25.76` digest appears if and only if the label is `3.25.76`, so a
+  vulnerable copy cannot be relabelled as a fixed release;
+- every zod copy other than the reviewed ones is a fixed release (`4.6.6` or
+  later; a `4.6.6` prerelease is not fixed), so the gate does not rely on the
+  OSV report listing other vulnerable versions separately;
+- every zod `3.25.76` node sits directly under `node_modules/@claude-flow/cli`,
+  `node_modules/@claude-flow/security` or `node_modules/@claude-flow/shared`,
+  is neither a link nor bundled, and has the exact registry `resolved` URL and
+  `integrity`;
+- each of those parents is a registry install: a plain `x.y.z` version, the
+  registry tarball URL for that version, a full `sha512-` integrity, neither a
+  link nor bundled, and a `name` field, if present, equal to its path. Its zod dependency is a single caret range `^3.x.y`, with
+  no leading zeros, that `3.25.76` satisfies. A range that also admits zod 4, or
+  one the installed copy does not satisfy, blocks;
+- at least one such node exists;
+- the acceptance expires at the start of `2026-11-27` UTC.
+
+The gate trusts the OSV source path as resolved on disk. A second path that is
+a symlink to the reviewed lock resolves to the same file and is treated as that
+file.
+
+Console's CI replaces its zero-vulnerability `npm audit` assertion for the
+adapter with `services/runtime-adapters/ruflo/check-dependency-audit.mjs`. It
+applies the same path, artifact, label, parent, fixed-version and expiry
+rules to the lock, and rejects duplicate JSON keys in the lock and the report,
+as the gate does. It does not trust the report:
+the total must equal the number of entries, each entry's name must match its
+key, every reference must resolve, every entry must lead to the zod advisory,
+zod must carry only `GHSA-mrhx-c7xc-m3w5`, and the reported zod nodes must
+equal exactly the vulnerable zod copies in the lock. The checker reads the
+whole lock, including optional entries that `npm audit --omit=optional` skips,
+so a vulnerable optional zod blocks here as it does in the OSV gate.
+
+Fixable zod 4 copies are not covered and must be upgraded. Nothing detects a Ruflo zod 4 release automatically. Once one
+is published and console moves to it, remove the acceptance from both places in
+a reviewed policy commit. Expiry itself blocks; it never silently extends.
+
 ## Static-UI runtime evidence
 
 The Router correction is not a package-version allowlist. It is usable only

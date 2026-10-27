@@ -62,7 +62,9 @@ EXPECTED_LOCAL_POLICY_SOURCE = {
     "run_osv_scan.py": "6669a90eb60730350f2b7d0eb2b2b2de039ffeb006f9f61fe081e42dbfa6b20e",
     "test_run_osv_scan.py": "18393746985f82a1d4d2d3d7a8b6dbbb97ca73da142e77f99442511cfa6b3604",
     "test_pnpm_document_boundary.py": "97ef74518093a211fac6849aeb26934f93358dc3e43af58c7369966d3403b59e",
-    "pnpm12_public_fixtures.json": "93b43028a4d417fb90ecff6eaf334d02e17155e7801a21469db743b3970ef08c"
+    "pnpm12_public_fixtures.json": "93b43028a4d417fb90ecff6eaf334d02e17155e7801a21469db743b3970ef08c",
+    "osv_gate.py": "97284480278394ca5c8dd28722db6e133f161f4107b81c67be0c2e1faf7fb1cf",
+    "test_osv_gate.py": "6a19ce50b9698304387a8ca09c1bb61209e9cd5d9bdb71217e36ab5bbae0c645",
 }
 
 POLICY_ARTIFACTS = {

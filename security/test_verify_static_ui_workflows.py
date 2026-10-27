@@ -430,6 +430,7 @@ class StaticUiWorkflowPolicyTests(unittest.TestCase):
         self.assertEqual(set(EXPECTED_LOCAL_POLICY_SOURCE), {
             "run_osv_scan.py", "test_run_osv_scan.py",
             "test_pnpm_document_boundary.py", "pnpm12_public_fixtures.json",
+            "osv_gate.py", "test_osv_gate.py",
         })
         self.assertEqual(len(expected), 10)
         for filename in expected:
