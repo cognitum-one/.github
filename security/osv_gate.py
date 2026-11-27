@@ -1,13 +1,10 @@
 #!/usr/bin/env python3
 """Fail closed on fixable High/Critical OSV findings.
 
-There are two organization-owned exceptions, and each one expires.
+There is one organization-owned exception, and it expires.
 
-GHSA-qwww-vcr4-c8h2 at React Router 7.18.2 is a range exception.  The
-maintainer advisory marks 7.18.2 as patched on the 7.x line while the
-aggregated OSV range currently reports it as affected.  The exception
-additionally requires the exact reviewed package artifacts and static-runtime
-profile.
+The React Router exception for GHSA-qwww-vcr4-c8h2 at 7.18.2 ended on
+2026-11-15 and was removed: the advisory database now lists 7.18.2 as patched.
 
 GHSA-mrhx-c7xc-m3w5 at zod 3.25.76 covers Ruflo's own zod 3 copies in
 console's Ruflo adapter.  The fix exists only in zod 4.6.6, and every Ruflo
@@ -30,41 +27,6 @@ import stat
 import sys
 from typing import Any
 
-ROUTER_ADVISORY = "GHSA-qwww-vcr4-c8h2"
-ROUTER_VERSION = "7.18.2"
-ROUTER_EXCEPTION_EXPIRES = dt.date(2026, 11, 15)
-ROUTER_LOCKS = {
-    ("cognitum-one/management", "management-ui/package-lock.json"),
-    ("cognitum-one/website", "package-lock.json"),
-}
-ROUTER_PROFILES = {
-    ("cognitum-one/management", "management-ui/package-lock.json"): {
-        "manifest": "management-ui/package.json",
-    },
-    ("cognitum-one/website", "package-lock.json"): {
-        "manifest": "package.json",
-    },
-}
-ROUTER_ARTIFACTS = {
-    "react-router": {
-        "path": "node_modules/react-router",
-        "resolved": "https://registry.npmjs.org/react-router/-/react-router-7.18.2.tgz",
-        "integrity": (
-            "sha512-aUVMjFm3GAPTTZL7oYr5E7ETiqfQCHRLH+B+5afnICvf0r7kkK4eR6SMuwbSTJw/"
-            "7t+12khT/Kahij49fqOCIg=="
-        ),
-    },
-    "react-router-dom": {
-        "path": "node_modules/react-router-dom",
-        "resolved": (
-            "https://registry.npmjs.org/react-router-dom/-/react-router-dom-7.18.2.tgz"
-        ),
-        "integrity": (
-            "sha512-AIKJ/jgGlFb3EbfCXk5Gzshiwt+l3mqbCrNjmEWMMjqQxNJ3svBa6bgzFyCC2Sw3"
-            "RA0VWF1kg3uQf2OFhxb8hw=="
-        ),
-    },
-}
 ZOD_ADVISORY = "GHSA-mrhx-c7xc-m3w5"
 ZOD_VERSION = "3.25.76"
 ZOD_EXCEPTION_EXPIRES = dt.date(2026, 11, 27)
@@ -324,114 +286,6 @@ def _read_profile_json(root: Path, relative: str) -> dict[str, Any] | None:
     return _read_lock(str(path))
 
 
-def _has_reviewed_router_artifacts(
-    *,
-    repository: str,
-    relative_lock: str,
-    root: Path,
-    runtime_evidence_verified: bool,
-) -> bool:
-    profile = ROUTER_PROFILES.get((repository, relative_lock))
-    if profile is None or runtime_evidence_verified is not True:
-        return False
-    manifest = _read_profile_json(root, profile["manifest"])
-    lock = _read_profile_json(root, relative_lock)
-    if manifest is None or lock is None:
-        return False
-
-    dependency_groups = (
-        "dependencies",
-        "devDependencies",
-        "optionalDependencies",
-        "peerDependencies",
-    )
-    dependencies = manifest.get("dependencies")
-    if (
-        not isinstance(dependencies, dict)
-        or dependencies.get("react-router-dom") != ROUTER_VERSION
-    ):
-        return False
-    for group_name in dependency_groups:
-        group = manifest.get(group_name, {})
-        if not isinstance(group, dict):
-            return False
-        if "react-router" in group:
-            return False
-        if group_name != "dependencies" and "react-router-dom" in group:
-            return False
-
-    packages = lock.get("packages")
-    if not isinstance(packages, dict):
-        return False
-    root_package = packages.get("")
-    router = packages.get("node_modules/react-router")
-    router_dom = packages.get("node_modules/react-router-dom")
-    if not all(isinstance(item, dict) for item in (root_package, router, router_dom)):
-        return False
-    root_dependencies = root_package.get("dependencies")
-    dom_dependencies = router_dom.get("dependencies")
-    if (
-        not isinstance(root_dependencies, dict)
-        or root_dependencies.get("react-router-dom") != ROUTER_VERSION
-        or router.get("version") != ROUTER_VERSION
-        or router_dom.get("version") != ROUTER_VERSION
-        or not isinstance(dom_dependencies, dict)
-        or dom_dependencies.get("react-router") != ROUTER_VERSION
-    ):
-        return False
-    router_nodes: dict[str, str] = {}
-    for package_path, metadata in packages.items():
-        if not isinstance(package_path, str) or not isinstance(metadata, dict):
-            return False
-        package_name = package_path.split("node_modules/")[-1]
-        expected = ROUTER_ARTIFACTS.get(package_name)
-        if expected is not None:
-            if package_name in router_nodes:
-                return False
-            router_nodes[package_name] = package_path
-            if (
-                package_path != expected["path"]
-                or metadata.get("version") != ROUTER_VERSION
-                or metadata.get("resolved") != expected["resolved"]
-                or metadata.get("integrity") != expected["integrity"]
-            ):
-                return False
-    if router_nodes != {
-        name: artifact["path"] for name, artifact in ROUTER_ARTIFACTS.items()
-    }:
-        return False
-    return True
-
-
-def reviewed_router_patch_exception(
-    *,
-    repository: str,
-    source: str,
-    root: Path,
-    package: str,
-    version: str,
-    advisory: str,
-    today: dt.date,
-    runtime_evidence_verified: bool,
-) -> bool:
-    relative = _relative_source(source, root)
-    if (
-        today >= ROUTER_EXCEPTION_EXPIRES
-        or (repository, relative or "") not in ROUTER_LOCKS
-        or package != "react-router"
-        or version != ROUTER_VERSION
-        or advisory != ROUTER_ADVISORY
-        or not _has_reviewed_router_artifacts(
-            repository=repository,
-            relative_lock=relative or "",
-            root=root,
-            runtime_evidence_verified=runtime_evidence_verified,
-        )
-    ):
-        return False
-    return True
-
-
 def _zod_is_fixed(version: str) -> bool:
     """zod is fixed from 4.6.6; a prerelease of 4.6.6 is not."""
     match = SEMVER.fullmatch(version)
@@ -567,7 +421,6 @@ def reviewed_ruflo_zod_exception(
 
 
 REVIEWED_EXCEPTION_EXPIRY = {
-    ROUTER_ADVISORY: ROUTER_EXCEPTION_EXPIRES,
     ZOD_ADVISORY: ZOD_EXCEPTION_EXPIRES,
 }
 
@@ -580,6 +433,11 @@ def evaluate(
     today: dt.date,
     runtime_evidence_verified: bool = False,
 ) -> tuple[list[tuple[str, str, str, float, str]], ...]:
+    # runtime_evidence_verified only ever gated the React Router exception,
+    # which ended on 2026-11-15. It stays in the signature because
+    # security_findings.py and the scan workflows still pass it; removing the
+    # receipt plumbing is a separate change.
+    del runtime_evidence_verified
     results = report.get("results")
     if not isinstance(results, list):
         raise ValueError("OSV JSON does not contain a results array")
@@ -701,16 +559,7 @@ def evaluate(
                 if score < 7.0:
                     continue
                 row = (name, version, advisory, score, source)
-                if reviewed_router_patch_exception(
-                    repository=repository,
-                    source=source,
-                    root=root,
-                    package=name,
-                    version=version,
-                    advisory=advisory,
-                    today=today,
-                    runtime_evidence_verified=runtime_evidence_verified,
-                ) or reviewed_ruflo_zod_exception(
+                if reviewed_ruflo_zod_exception(
                     repository=repository,
                     source=source,
                     root=root,

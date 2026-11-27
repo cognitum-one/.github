@@ -46,11 +46,6 @@ def profile(*, repository: str = "example/static-ui") -> dict:
             "ownerId": "202",
             "visibility": "private",
         },
-        "exception": {
-            **receipt.APPLICABILITY_EXCEPTION,
-            "packageManifestPath": "package.json",
-            "lockfilePath": "package-lock.json",
-        },
         "contextSubdirectory": ".",
         "dockerfile": "Dockerfile",
         "dockerignore": ".dockerignore",
@@ -273,6 +268,21 @@ class ProfileAndContextTest(unittest.TestCase):
             path = Path(directory) / "profiles.json"
             write_policy(path, value)
             with self.assertRaisesRegex(receipt.PolicyError, "digest is invalid"):
+                receipt.load_policy(path)
+
+    def test_ended_react_router_exception_key_is_rejected(self) -> None:
+        # The GHSA-qwww-vcr4-c8h2 applicability exception ended on 2026-11-15.
+        # A profile that still declares it is no longer valid policy.
+        value = policy()
+        value["profiles"]["example/static-ui"]["exception"] = {
+            "advisory": "GHSA-qwww-vcr4-c8h2",
+            "package": "react-router",
+            "version": "7.18.2",
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "profiles.json"
+            write_policy(path, value)
+            with self.assertRaises(receipt.PolicyError):
                 receipt.load_policy(path)
 
     def test_committed_archive_ignores_dirty_and_untracked_files(self) -> None:

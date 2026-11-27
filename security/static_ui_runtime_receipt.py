@@ -97,16 +97,6 @@ PREMERGE_FIXTURE_SOURCE = "organization-profile"
 PREMERGE_FIXTURE_CLASSIFICATION = "public-nonrelease"
 RELEASE_SECRET_KIND = "secret-manager"
 RELEASE_SECRET_SOURCE = "gcloud-numeric-version"
-APPLICABILITY_EXCEPTION = {
-    "advisory": "GHSA-qwww-vcr4-c8h2",
-    "package": "react-router",
-    "version": "7.18.2",
-    "expiresExclusiveUtc": "2026-11-15",
-    "maintainerAdvisoryUrl": (
-        "https://github.com/remix-run/react-router/security/advisories/"
-        "GHSA-qwww-vcr4-c8h2"
-    ),
-}
 ASSERTION_KEYS = {
     "committedOnlyContext",
     "exactPackagingPolicy",
@@ -216,7 +206,6 @@ def _validate_profile(repository: str, profile: dict[str, Any]) -> None:
         "status",
         "pendingReason",
         "repositoryIdentity",
-        "exception",
         "contextSubdirectory",
         "dockerfile",
         "dockerignore",
@@ -275,39 +264,6 @@ def _validate_profile(repository: str, profile: dict[str, Any]) -> None:
         raise PolicyError(f"profile {repository} does not hash its Dockerfile")
     if profile["dockerignore"] not in packaging:
         raise PolicyError(f"profile {repository} does not hash its .dockerignore")
-
-    exception = profile["exception"]
-    _require_exact_keys(
-        exception,
-        {
-            *APPLICABILITY_EXCEPTION,
-            "packageManifestPath",
-            "lockfilePath",
-        },
-        f"{repository} exception",
-    )
-    for key, expected in APPLICABILITY_EXCEPTION.items():
-        if exception[key] != expected:
-            raise PolicyError(f"{repository} applicability exception {key} differs")
-    manifest_path = _safe_relative(
-        exception["packageManifestPath"],
-        f"{repository} exception package manifest",
-    )
-    lockfile_path = _safe_relative(
-        exception["lockfilePath"],
-        f"{repository} exception lockfile",
-    )
-    if (
-        manifest_path not in packaging
-        or lockfile_path not in packaging
-        or (
-            profile["status"] == "approved"
-            and (packaging[manifest_path] is None or packaging[lockfile_path] is None)
-        )
-    ):
-        raise PolicyError(
-            f"{repository} exception manifest and lockfile must be digest-pinned"
-        )
 
     submodules = profile["submodules"]
     if not isinstance(submodules, dict):
@@ -1965,26 +1921,6 @@ def _profile_file_digest(policy_path: Path) -> str:
     return f"sha256:{_sha256_file(policy_path)}"
 
 
-def _applicability_exception_evidence(
-    profile: dict[str, Any],
-) -> dict[str, Any]:
-    exception = profile["exception"]
-    manifest_path = exception["packageManifestPath"]
-    lockfile_path = exception["lockfilePath"]
-    packaging = profile["packagingFiles"]
-    manifest_digest = packaging[manifest_path]
-    lockfile_digest = packaging[lockfile_path]
-    if not isinstance(manifest_digest, str) or not isinstance(lockfile_digest, str):
-        raise PolicyError(
-            "approved applicability exception inputs must have exact digests"
-        )
-    return {
-        **exception,
-        "packageManifestDigest": f"sha256:{manifest_digest}",
-        "lockfileDigest": f"sha256:{lockfile_digest}",
-    }
-
-
 def build_receipt(
     *,
     repository: str,
@@ -2095,7 +2031,6 @@ def build_receipt(
             "profileDigest": expected_profile_digest,
             "profileFileDigest": _profile_file_digest(policy_path),
             "generatorDigest": f"sha256:{_sha256_file(Path(__file__))}",
-            "applicabilityException": _applicability_exception_evidence(profile),
         },
         "invocation": bound_invocation,
         "source": {
@@ -2234,7 +2169,6 @@ def verify_receipt(
         "profileDigest": f"sha256:{profile_digest(repository, profile)}",
         "profileFileDigest": _profile_file_digest(policy_path),
         "generatorDigest": f"sha256:{_sha256_file(Path(__file__))}",
-        "applicabilityException": _applicability_exception_evidence(profile),
         "packagingFileDigests": profile["packagingFiles"],
         "inventoryDigest": inventory_digest,
         "inventoryEntryCount": inventory["entryCount"],
@@ -2265,9 +2199,6 @@ def verify_receipt(
         "profileDigest": receipt.get("policy", {}).get("profileDigest"),
         "profileFileDigest": receipt.get("policy", {}).get("profileFileDigest"),
         "generatorDigest": receipt.get("policy", {}).get("generatorDigest"),
-        "applicabilityException": receipt.get("policy", {}).get(
-            "applicabilityException"
-        ),
         "packagingFileDigests": receipt.get("source", {}).get("packagingFileDigests"),
         "inventoryDigest": receipt.get("image", {}).get("inventoryDigest"),
         "inventoryEntryCount": receipt.get("image", {}).get("inventoryEntryCount"),

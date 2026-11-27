@@ -15,8 +15,6 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from osv_gate import (
-    ROUTER_EXCEPTION_EXPIRES,
-    ROUTER_PROFILES,
     RUNTIME_RECEIPT_EVIDENCE_ENVIRONMENT,
     RUNTIME_RECEIPT_GITHUB_ENVIRONMENT,
     ZOD_EXCEPTION_EXPIRES,
@@ -107,18 +105,10 @@ class OsvGateTest(unittest.TestCase):
             ),
             encoding="utf-8",
         )
-        profile = {
-            "manifest": "management-ui/package.json",
-        }
-        self.profile_patch = patch.dict(
-            ROUTER_PROFILES,
-            {("cognitum-one/management", "management-ui/package-lock.json"): profile},
-        )
-        self.profile_patch.start()
-        self.today = ROUTER_EXCEPTION_EXPIRES - dt.timedelta(days=1)
+        # The last day the ended React Router exception still applied.
+        self.today = dt.date(2026, 11, 14)
 
     def tearDown(self) -> None:
-        self.profile_patch.stop()
         self.scratch.cleanup()
 
     def evaluate(self, payload: dict, repository: str = "cognitum-one/management"):
@@ -146,53 +136,21 @@ class OsvGateTest(unittest.TestCase):
             "GITHUB_WORKFLOW_SHA": "d" * 40,
         }
 
-    def test_accepts_only_the_exact_patched_static_runtime_record(self) -> None:
-        blocking, reviewed = self.evaluate(report(str(self.management_lock)))
-        self.assertEqual(blocking, [])
-        self.assertEqual(len(reviewed), 1)
-
-    def test_wrong_repository_is_not_excused(self) -> None:
-        blocking, reviewed = self.evaluate(
-            report(str(self.management_lock)),
-            repository="attacker/fork",
-        )
-        self.assertEqual(len(blocking), 1)
-        self.assertEqual(reviewed, [])
-
-    def test_version_or_lock_drift_is_not_excused(self) -> None:
-        self.management_lock.write_text(json.dumps(lock("7.18.3")), encoding="utf-8")
-        blocking, reviewed = self.evaluate(report(str(self.management_lock)))
-        self.assertEqual(len(blocking), 1)
-        self.assertEqual(reviewed, [])
-
-    def test_dependency_range_does_not_broaden_exception(self) -> None:
-        manifest = json.loads(self.management_manifest.read_text(encoding="utf-8"))
-        manifest["dependencies"]["react-router-dom"] = "^7.18.2"
-        self.management_manifest.write_text(json.dumps(manifest), encoding="utf-8")
-        blocking, reviewed = self.evaluate(report(str(self.management_lock)))
-        self.assertEqual(len(blocking), 1)
-        self.assertEqual(reviewed, [])
-
-    def test_duplicate_manifest_keys_do_not_broaden_exception(self) -> None:
-        self.management_manifest.write_text(
-            '{"dependencies":{"react-router-dom":"7.18.2"},'
-            '"dependencies":{"react-router-dom":"7.18.2"}}',
-            encoding="utf-8",
-        )
-        blocking, reviewed = self.evaluate(report(str(self.management_lock)))
-        self.assertEqual(len(blocking), 1)
-        self.assertEqual(reviewed, [])
-
-    def test_exception_expires_fail_closed(self) -> None:
-        blocking, reviewed = evaluate(
-            report(str(self.management_lock)),
-            repository="cognitum-one/management",
-            root=self.root,
-            today=ROUTER_EXCEPTION_EXPIRES,
-            runtime_evidence_verified=True,
-        )
-        self.assertEqual(len(blocking), 1)
-        self.assertEqual(reviewed, [])
+    def test_ended_router_exception_no_longer_excuses_the_reviewed_record(
+        self,
+    ) -> None:
+        # The exact record the React Router exception used to admit: the
+        # reviewed repository, lock, artifacts and runtime evidence, on a day
+        # before its expiry. With the exception removed, it blocks.
+        for repository in ("cognitum-one/management", "cognitum-one/website"):
+            with self.subTest(repository=repository):
+                blocking, reviewed = self.evaluate(
+                    report(str(self.management_lock)),
+                    repository=repository,
+                )
+                self.assertEqual(len(blocking), 1)
+                self.assertEqual(blocking[0][:3], ("react-router", "7.18.2", "GHSA-qwww-vcr4-c8h2"))
+                self.assertEqual(reviewed, [])
 
     def test_other_high_advisory_remains_blocking(self) -> None:
         blocking, reviewed = self.evaluate(
@@ -202,37 +160,6 @@ class OsvGateTest(unittest.TestCase):
                 version="2.1.2",
                 advisory="GHSA-mh99-v99m-4gvg",
             )
-        )
-        self.assertEqual(len(blocking), 1)
-        self.assertEqual(reviewed, [])
-
-    def test_registry_artifact_integrity_drift_is_not_excused(self) -> None:
-        payload = json.loads(self.management_lock.read_text(encoding="utf-8"))
-        payload["packages"]["node_modules/react-router"][
-            "integrity"
-        ] = "sha512-attacker"
-        self.management_lock.write_text(json.dumps(payload), encoding="utf-8")
-        blocking, reviewed = self.evaluate(report(str(self.management_lock)))
-        self.assertEqual(len(blocking), 1)
-        self.assertEqual(reviewed, [])
-
-    def test_registry_artifact_url_drift_is_not_excused(self) -> None:
-        payload = json.loads(self.management_lock.read_text(encoding="utf-8"))
-        payload["packages"]["node_modules/react-router"][
-            "resolved"
-        ] = "https://attacker.invalid/react-router.tgz"
-        self.management_lock.write_text(json.dumps(payload), encoding="utf-8")
-        blocking, reviewed = self.evaluate(report(str(self.management_lock)))
-        self.assertEqual(len(blocking), 1)
-        self.assertEqual(reviewed, [])
-
-    def test_missing_runtime_receipt_is_not_excused(self) -> None:
-        blocking, reviewed = evaluate(
-            report(str(self.management_lock)),
-            repository="cognitum-one/management",
-            root=self.root,
-            today=self.today,
-            runtime_evidence_verified=False,
         )
         self.assertEqual(len(blocking), 1)
         self.assertEqual(reviewed, [])
@@ -346,27 +273,6 @@ class OsvGateTest(unittest.TestCase):
                     "refs/pull/69/merge"
                 ),
             )
-
-    def test_nested_router_copy_is_not_excused(self) -> None:
-        payload = json.loads(self.management_lock.read_text(encoding="utf-8"))
-        payload["packages"]["node_modules/other/node_modules/react-router"] = {
-            "version": "7.18.2"
-        }
-        self.management_lock.write_text(json.dumps(payload), encoding="utf-8")
-        blocking, reviewed = self.evaluate(report(str(self.management_lock)))
-        self.assertEqual(len(blocking), 1)
-        self.assertEqual(reviewed, [])
-
-    def test_nested_router_metadata_name_cannot_hide_copy(self) -> None:
-        payload = json.loads(self.management_lock.read_text(encoding="utf-8"))
-        payload["packages"]["node_modules/other/node_modules/react-router"] = {
-            "name": "innocent",
-            "version": "7.18.2",
-        }
-        self.management_lock.write_text(json.dumps(payload), encoding="utf-8")
-        blocking, reviewed = self.evaluate(report(str(self.management_lock)))
-        self.assertEqual(len(blocking), 1)
-        self.assertEqual(reviewed, [])
 
     def test_candidate_dev_flags_cannot_downgrade_a_finding(self) -> None:
         payload = lock()
