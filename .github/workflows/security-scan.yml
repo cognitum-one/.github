@@ -889,6 +889,14 @@ jobs:
           # Gate: fail on High/Critical (CVSS>=7) fixable vulns that can SHIP.
           # The exact, expiring React Router 7.18.2 OSV range correction is
           # independently pinned organization policy; every other finding blocks.
+          # Verify the runtime receipt against the candidate's own profile, the
+          # one it was built from. An export in the OSV-Scanner step does not
+          # reach this step, so without this the gate falls back to the copy
+          # beside the script and refuses a self-consistent repository.
+          if [ -f "$GITHUB_WORKSPACE/.github/static-ui-profile.json" ] \
+            && [ ! -L "$GITHUB_WORKSPACE/.github/static-ui-profile.json" ]; then
+            export STATIC_UI_POLICY_PATH="$GITHUB_WORKSPACE/.github/static-ui-profile.json"
+          fi
           set +e
           OSV_REPORT="$OSV_REPORT" \
           OSV_REPOSITORY_ROOT="$GITHUB_WORKSPACE" \

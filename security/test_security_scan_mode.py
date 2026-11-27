@@ -134,8 +134,11 @@ class WorkflowGrammarTests(unittest.TestCase):
         # The classify call verifies the receipt against the candidate's own
         # profile, exactly as the enforcing OSV step does.
         export = 'export STATIC_UI_POLICY_PATH="$GITHUB_WORKSPACE/.github/static-ui-profile.json"'
-        self.assertEqual(deps.count(export), 2)
+        self.assertEqual(deps.count(export), 3)
         self.assertLess(deps.index(export), deps.index("--osv-gate"))
+        enforce_step = deps.split("- name: Enforce OSV dependency policy", 1)[1]
+        self.assertIn(export, enforce_step)
+        self.assertLess(enforce_step.index(export), enforce_step.index('python3 "$POLICY_DIR/osv_gate.py"'))
         # The gate imports its runtime-receipt verifier from its own directory.
         self.assertEqual(
             deps.count('FINDINGS="$(PYTHONPATH="$POLICY_DIR" python3 "$FINDINGS_TOOL" --control dependencies'),
