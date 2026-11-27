@@ -125,12 +125,18 @@ jobs:
   # reverses the TEMP hosted-minutes-stop move of 2026-08-20
   # (cognitum-one/.github#76). The workspace purge steps below are kept: they
   # are a no-op on a fresh hosted VM and still correct on any reused workspace.
+  #
+  # Pinned to ubuntu-24.04, not ubuntu-latest (2026-11-27). ubuntu-latest moved
+  # to ubuntu-26.04, whose Docker uses the containerd image store; there
+  # `docker image inspect` reports the manifest digest as the image ID, and the
+  # static-UI receipt's Buildx config-digest check refuses every candidate
+  # (management#485). Move the label only together with that check.
   secrets:
     name: secret scan (current files)
     outputs:
       findings: ${{ steps.findings.outputs.json }}
       completion: ${{ steps.findings.outputs.completion }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
@@ -243,7 +249,7 @@ jobs:
     name: secret scan (full history audit)
     # Findings are informational; scanner integrity/execution failures block.
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
@@ -320,7 +326,7 @@ jobs:
     outputs:
       findings: ${{ steps.findings.outputs.json }}
       completion: ${{ steps.findings.outputs.completion }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
@@ -397,7 +403,7 @@ jobs:
 
   deps:
     name: dependency scan (OSV, fail on High+ fixable)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       findings: ${{ steps.findings.outputs.json }}
       advisories: ${{ steps.findings.outputs.advisories }}
@@ -908,7 +914,7 @@ jobs:
     outputs:
       evidence: ${{ steps.policy.outputs.evidence }}
       mode: ${{ steps.policy.outputs.mode }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Evaluate immutable SecurityPolicy/v1 and write evidence receipt
         id: policy
