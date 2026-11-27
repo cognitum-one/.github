@@ -817,6 +817,14 @@ jobs:
           # osv_gate.py is loaded by file path, so its own directory is not on
           # sys.path; PYTHONPATH lets it import static_ui_runtime_receipt from
           # the same hash-verified directory when a runtime receipt is present.
+          # It must also verify the receipt against the candidate's own profile,
+          # as the OSV-Scanner step does; the copy beside the script is a
+          # different document and fails with "premerge fixture evidence
+          # differs from the profile".
+          if [ -f "$GITHUB_WORKSPACE/.github/static-ui-profile.json" ] \
+            && [ ! -L "$GITHUB_WORKSPACE/.github/static-ui-profile.json" ]; then
+            export STATIC_UI_POLICY_PATH="$GITHUB_WORKSPACE/.github/static-ui-profile.json"
+          fi
           FINDINGS="$(PYTHONPATH="$POLICY_DIR" python3 "$FINDINGS_TOOL" --control dependencies --report "$RUNNER_TEMP/osv-report.json" --repository-root "$GITHUB_WORKSPACE" --osv-gate "$POLICY_DIR/osv_gate.py")"
           echo "json=$FINDINGS" >> "$GITHUB_OUTPUT"
           # Every advisory in the report, counted or not, travels to the
