@@ -131,6 +131,11 @@ class WorkflowGrammarTests(unittest.TestCase):
         deps = self.source.split("  deps:\n", 1)[1].split("\n  enforcement:\n", 1)[0]
         classify = '--repository-root "$GITHUB_WORKSPACE" --osv-gate "$POLICY_DIR/osv_gate.py")"'
         self.assertEqual(deps.count(classify), 1)
+        # The gate imports its runtime-receipt verifier from its own directory.
+        self.assertEqual(
+            deps.count('FINDINGS="$(PYTHONPATH="$POLICY_DIR" python3 "$FINDINGS_TOOL" --control dependencies'),
+            1,
+        )
         normalize_step = deps.split("- name: Normalize dependency findings before enforcing", 1)[1]
         normalize_step = normalize_step.split("- name: Enforce OSV dependency policy", 1)[0]
         for name in ("RECEIPT", "INVENTORY", "NONCE", "IMAGE_NAME", "IMAGE_ID"):
