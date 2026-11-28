@@ -117,7 +117,6 @@ class OsvGateTest(unittest.TestCase):
             repository=repository,
             root=self.root,
             today=self.today,
-            runtime_evidence_verified=True,
         )
 
     @staticmethod
