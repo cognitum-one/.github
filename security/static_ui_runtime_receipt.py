@@ -1900,13 +1900,45 @@ def _require_current_origin_main(
         raise PolicyError("release source is not the current GitHub main")
 
 
+BUILDX_IMAGE_MEDIA_TYPES = frozenset(
+    {
+        "application/vnd.oci.image.index.v1+json",
+        "application/vnd.oci.image.manifest.v1+json",
+        "application/vnd.docker.distribution.manifest.list.v2+json",
+        "application/vnd.docker.distribution.manifest.v2+json",
+    }
+)
+
+
 def _validate_build_metadata(metadata: dict[str, Any], image_id: str) -> dict[str, Any]:
+    """Bind the Buildx result to the image ID docker inspected.
+
+    The classic Docker image store reports the config digest as the image ID,
+    and Buildx records that digest. The containerd image store (Docker 29 on
+    ubuntu-26.04) reports the digest of the OCI index or manifest Buildx wrote,
+    and Buildx records no config digest at all. That digest commits to the
+    config and every layer, so it binds the image just as tightly. Each store
+    is accepted only in its own exact shape: metadata without a config digest
+    never matches a classic-store image ID, so neither branch can stand in for
+    the other.
+    """
     if not isinstance(metadata, dict):
         raise PolicyError("Buildx metadata must be an object")
     config_digest = metadata.get("containerimage.config.digest")
+    manifest_digest = metadata.get("containerimage.digest")
     provenance = metadata.get("buildx.build.provenance")
-    if config_digest != image_id:
-        raise PolicyError("Buildx config digest does not equal docker image ID")
+    if "containerimage.config.digest" in metadata:
+        if config_digest != image_id:
+            raise PolicyError("Buildx config digest does not equal docker image ID")
+    else:
+        descriptor = metadata.get("containerimage.descriptor")
+        if (
+            manifest_digest != image_id
+            or not isinstance(descriptor, dict)
+            or descriptor.get("digest") != image_id
+            or descriptor.get("mediaType") not in BUILDX_IMAGE_MEDIA_TYPES
+        ):
+            raise PolicyError("Buildx image digest does not equal docker image ID")
     if not isinstance(provenance, dict) or not provenance:
         raise PolicyError("Buildx max provenance metadata is absent")
     return {
