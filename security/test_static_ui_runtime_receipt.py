@@ -1148,6 +1148,103 @@ class ReceiptAndRevisionTest(unittest.TestCase):
         self.assertIsNone(value["image"]["registryDigest"])
         self.assertEqual(value["subject"]["kind"], "local-image-config")
 
+    @staticmethod
+    def containerd_metadata(index_digest: str = IMAGE_ID) -> dict:
+        # The shape Buildx 0.38 writes with the containerd image store (Docker
+        # 29.9, measured 2026-11-28): no config digest, and the image ID is the
+        # digest of the OCI index holding the image and its provenance.
+        return {
+            "buildx.build.provenance": {"mode": "max"},
+            "buildx.build.ref": "builder/ref",
+            "containerimage.descriptor": {
+                "mediaType": "application/vnd.oci.image.index.v1+json",
+                "digest": index_digest,
+                "size": 856,
+            },
+            "containerimage.digest": index_digest,
+            "image.name": "registry.example/static-ui:candidate",
+        }
+
+    def test_premerge_receipt_binds_a_containerd_store_image(self) -> None:
+        self.metadata = self.containerd_metadata()
+        value = self.make_receipt()
+        self.verify_premerge(value)
+        self.assertIsNone(value["build"]["metadata"]["configDigest"])
+        self.assertEqual(value["build"]["metadata"]["manifestDigest"], IMAGE_ID)
+        with self.assertRaisesRegex(receipt.PolicyError, "replay-binding tuple"):
+            self.verify_premerge(value, expected_image_id=f"sha256:{'7' * 64}")
+
+    def test_build_metadata_accepts_each_image_store_only_in_its_own_shape(self) -> None:
+        other = f"sha256:{'7' * 64}"
+        classic = dict(self.metadata)
+        self.assertEqual(
+            receipt._validate_build_metadata(classic, IMAGE_ID)["configDigest"], IMAGE_ID
+        )
+        self.assertEqual(
+            receipt._validate_build_metadata(self.containerd_metadata(), IMAGE_ID)[
+                "manifestDigest"
+            ],
+            IMAGE_ID,
+        )
+        manifest = self.containerd_metadata()
+        manifest["containerimage.descriptor"]["mediaType"] = (
+            "application/vnd.oci.image.manifest.v1+json"
+        )
+        receipt._validate_build_metadata(manifest, IMAGE_ID)
+
+        def mutated(base: dict, change) -> dict:
+            value = json.loads(json.dumps(base))
+            change(value)
+            return value
+
+        rejected = {
+            "classic config digest differs": (
+                mutated(classic, lambda m: m.update({"containerimage.config.digest": other})),
+                "config digest does not equal",
+            ),
+            "classic config digest present but null": (
+                mutated(classic, lambda m: m.update({"containerimage.config.digest": None})),
+                "config digest does not equal",
+            ),
+            # A classic-store image ID is the config digest, never the manifest
+            # digest, so dropping the config digest cannot select the other branch.
+            "classic metadata stripped of its config digest": (
+                mutated(classic, lambda m: m.pop("containerimage.config.digest")),
+                "image digest does not equal",
+            ),
+            "containerd index digest differs": (
+                self.containerd_metadata(other),
+                "image digest does not equal",
+            ),
+            "containerd descriptor digest differs": (
+                mutated(
+                    self.containerd_metadata(),
+                    lambda m: m["containerimage.descriptor"].update({"digest": other}),
+                ),
+                "image digest does not equal",
+            ),
+            "containerd descriptor absent": (
+                mutated(self.containerd_metadata(), lambda m: m.pop("containerimage.descriptor")),
+                "image digest does not equal",
+            ),
+            "containerd descriptor is not an image": (
+                mutated(
+                    self.containerd_metadata(),
+                    lambda m: m["containerimage.descriptor"].update(
+                        {"mediaType": "application/vnd.in-toto+json"}
+                    ),
+                ),
+                "image digest does not equal",
+            ),
+            "containerd provenance absent": (
+                mutated(self.containerd_metadata(), lambda m: m.pop("buildx.build.provenance")),
+                "provenance metadata is absent",
+            ),
+        }
+        for name, (metadata, pattern) in rejected.items():
+            with self.subTest(name), self.assertRaisesRegex(receipt.PolicyError, pattern):
+                receipt._validate_build_metadata(metadata, IMAGE_ID)
+
     def test_premerge_receipt_cannot_satisfy_release(self) -> None:
         value = self.make_receipt()
         with self.assertRaisesRegex(receipt.PolicyError, "replay-binding tuple"):
