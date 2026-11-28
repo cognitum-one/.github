@@ -431,13 +431,7 @@ def evaluate(
     repository: str,
     root: Path,
     today: dt.date,
-    runtime_evidence_verified: bool = False,
 ) -> tuple[list[tuple[str, str, str, float, str]], ...]:
-    # runtime_evidence_verified only ever gated the React Router exception,
-    # which ended on 2026-11-15. It stays in the signature because
-    # security_findings.py and the scan workflows still pass it; removing the
-    # receipt plumbing is a separate change.
-    del runtime_evidence_verified
     results = report.get("results")
     if not isinstance(results, list):
         raise ValueError("OSV JSON does not contain a results array")
@@ -601,7 +595,10 @@ def main() -> int:
     root = Path(os.environ.get("OSV_REPOSITORY_ROOT", ".")).resolve()
     repository = os.environ.get("GITHUB_REPOSITORY", "")
     try:
-        runtime_evidence_verified = _verified_runtime_receipt_from_environment(
+        # A supplied runtime receipt must verify as a whole tuple; partial or
+        # invalid evidence fails the gate. No finding depends on the result
+        # since the React Router exception ended on 2026-11-15.
+        _verified_runtime_receipt_from_environment(
             repository=repository,
             root=root,
         )
@@ -613,7 +610,6 @@ def main() -> int:
             repository=repository,
             root=root,
             today=_today(),
-            runtime_evidence_verified=runtime_evidence_verified,
         )
     except (OSError, ValueError, TypeError) as error:
         print(f"::error::OSV JSON is missing, malformed, or unsafe: {error}")

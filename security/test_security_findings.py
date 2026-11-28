@@ -3,13 +3,18 @@
 
 from __future__ import annotations
 
+from contextlib import redirect_stdout
 import datetime as dt
 import hashlib
+import io
 from pathlib import Path
+import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import osv_gate
+import security_findings
 from security_findings import FindingsError, load_osv_gate, normalize
 from security_policy import apply_enforcement_mode, enforced_blocking, evaluate, load_policy
 
@@ -123,6 +128,32 @@ class SecurityFindingsTests(unittest.TestCase):
                 load_osv_gate(root / "missing.py")
             loaded = load_osv_gate(Path(__file__).with_name("osv_gate.py"))
             self.assertTrue(callable(loaded.evaluate))
+
+    def test_partial_runtime_receipt_evidence_fails_the_findings_step(self) -> None:
+        # The receipt verdict no longer gates any finding, but supplied runtime
+        # evidence must still verify as a whole tuple or the step fails.
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            report = root / "osv.json"
+            report.write_text('{"results":[]}\n', encoding="utf-8")
+            argv = [
+                "security_findings.py", "--control", "dependencies", "--report", str(report),
+                "--repository-root", str(root), "--osv-gate", str(Path(__file__).with_name("osv_gate.py")),
+            ]
+            environment = {"GITHUB_REPOSITORY": "cognitum-one/management", "OSV_RUNTIME_RECEIPT": "/tmp/receipt.json"}
+            with (
+                patch.object(sys, "argv", argv),
+                patch.dict("os.environ", environment, clear=True),
+                self.assertRaisesRegex(FindingsError, "runtime receipt evidence is invalid: .*incomplete"),
+            ):
+                security_findings.main()
+            with (
+                patch.object(sys, "argv", argv),
+                patch.dict("os.environ", {"GITHUB_REPOSITORY": "cognitum-one/cogs"}, clear=True),
+                redirect_stdout(io.StringIO()) as output,
+            ):
+                security_findings.main()
+            self.assertEqual(output.getvalue().strip(), "[]")
 
 
 class StrictProfileContractTests(unittest.TestCase):

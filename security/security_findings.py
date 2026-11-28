@@ -88,7 +88,6 @@ def _blocking_dependency_records(
     repository: str,
     repository_root: Path | None,
     today: dt.date,
-    runtime_evidence_verified: bool,
 ) -> list[list[str]]:
     """Records for exactly the rows the organization OSV gate would block on."""
     if repository_root is None:
@@ -101,7 +100,6 @@ def _blocking_dependency_records(
             repository=repository,
             root=repository_root.resolve(strict=True),
             today=today,
-            runtime_evidence_verified=runtime_evidence_verified,
         )
     except (OSError, ValueError, TypeError) as error:
         raise FindingsError(f"OSV gate refused the report: {error}") from error
@@ -124,7 +122,6 @@ def normalize(
     osv_gate: ModuleType | None = None,
     repository: str = "",
     today: dt.date | None = None,
-    runtime_evidence_verified: bool = False,
 ) -> list[str]:
     records: list[list[str]] = []
     if osv_gate is not None and control != "dependencies":
@@ -145,7 +142,6 @@ def normalize(
             repository=repository,
             repository_root=repository_root,
             today=today or dt.datetime.now(dt.timezone.utc).date(),
-            runtime_evidence_verified=runtime_evidence_verified,
         )
     elif control == "dependencies":
         if not isinstance(report, dict) or not isinstance(report.get("results"), list):
@@ -195,7 +191,6 @@ def main() -> None:
     args = parser.parse_args()
     osv_gate = None
     repository = ""
-    runtime_evidence_verified = False
     if args.osv_gate is not None:
         if args.control != "dependencies":
             parser.error("--osv-gate applies to --control dependencies only")
@@ -205,9 +200,9 @@ def main() -> None:
         repository = os.environ.get("GITHUB_REPOSITORY", "")
         try:
             # Same runtime-receipt gate as the enforcement step: with any
-            # OSV_RUNTIME_* evidence present the whole tuple must verify, so
-            # the router correction can never be admitted on partial evidence.
-            runtime_evidence_verified = osv_gate._verified_runtime_receipt_from_environment(
+            # OSV_RUNTIME_* evidence present the whole tuple must verify, and
+            # partial or invalid evidence fails the scan.
+            osv_gate._verified_runtime_receipt_from_environment(
                 repository=repository, root=args.repository_root.resolve(strict=True)
             )
         except (OSError, ValueError, TypeError) as error:
@@ -216,7 +211,6 @@ def main() -> None:
         normalize(
             args.control, _load(args.report), repository_root=args.repository_root,
             osv_gate=osv_gate, repository=repository,
-            runtime_evidence_verified=runtime_evidence_verified,
         ),
         separators=(",", ":"),
     ))
