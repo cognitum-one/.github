@@ -702,6 +702,20 @@ class StaticUiWorkflowPolicyTests(unittest.TestCase):
                 with self.assertRaises(WorkflowPolicyError):
                     self._verify(self._mutate("security", old, new))
 
+    def test_security_dependency_scan_runner_is_pinned(self) -> None:
+        deps = (
+            "deps:\n    name: dependency scan (OSV, fail on High+ fixable)\n"
+            "    runs-on: "
+        )
+        for label in ("ubuntu-latest", "ubuntu-26.04"):
+            with self.subTest(label=label):
+                with self.assertRaises(WorkflowPolicyError):
+                    self._verify(
+                        self._mutate(
+                            "security", deps + "ubuntu-24.04", deps + label
+                        )
+                    )
+
     def test_release_attestation_and_exact_digest_gates_are_mandatory(self) -> None:
         mutations = (
             (

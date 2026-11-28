@@ -23,8 +23,10 @@ protected product security context.
 
 ## Where it runs (2026-09-27; previously 2026-08-20)
 
-Every job runs on GitHub-hosted `ubuntu-latest`, for public and private callers
-alike. The scan holds no cloud credentials, and the shared self-hosted
+Every job runs on GitHub-hosted `ubuntu-24.04`, for public and private callers
+alike. It is pinned rather than `ubuntu-latest` since 2026-11-27: `ubuntu-latest`
+moved to ubuntu-26.04, whose Docker uses the containerd image store, and there
+the static-UI receipt's Buildx config-digest check refuses every candidate. The scan holds no cloud credentials, and the shared self-hosted
 `[self-hosted, gcp-bypass]` pool is reserved for deploy jobs (owner decision
 2026-09-27): with 12 slots serving every repository's CI and CD, jobs queued
 there for up to 13 minutes, while hosted jobs started in seconds.
